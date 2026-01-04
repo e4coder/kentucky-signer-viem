@@ -40,7 +40,8 @@ export class KentuckySignerClient {
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '') // Remove trailing slash
-    this.fetchImpl = options.fetch ?? globalThis.fetch
+    // Bind fetch to globalThis to avoid "Illegal invocation" in browsers
+    this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.timeout = options.timeout ?? 30000
   }
 
