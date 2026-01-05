@@ -1,16 +1,19 @@
-import React, {
+import {
   createContext,
   useContext,
   useState,
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from 'react'
 import type { AuthSession } from '../types'
 import { KentuckySignerClient } from '../client'
+import { SecureKentuckySignerClient } from '../secure-client'
 import {
   authenticateWithPasskey,
+  authenticateWithPassword as authWithPassword,
   isSessionValid,
   refreshSessionIfNeeded,
   LocalStorageTokenStorage,
@@ -19,6 +22,11 @@ import {
   createKentuckySignerAccount,
   type KentuckySignerAccount,
 } from '../account'
+import {
+  EphemeralKeyManager,
+  IndexedDBEphemeralKeyStorage,
+  MemoryEphemeralKeyStorage,
+} from '../ephemeral'
 
 /**
  * Kentucky Signer context state
@@ -34,20 +42,34 @@ export interface KentuckySignerState {
   account: KentuckySignerAccount | null
   /** Last error (if any) */
   error: Error | null
+  /** Whether ephemeral key is bound to the token */
+  ephemeralKeyBound: boolean
+  /** Whether secure mode (ephemeral key signing) is enabled */
+  secureMode: boolean
+  /** Whether ephemeral keys are persisted in IndexedDB (survives refresh) */
+  persistEphemeralKeys: boolean
 }
 
 /**
  * Kentucky Signer context actions
  */
 export interface KentuckySignerActions {
-  /** Authenticate with passkey */
-  authenticate: (accountId: string, options?: { rpId?: string }) => Promise<void>
+  /** Authenticate with passkey or set an existing session */
+  authenticate: (accountId: string, options?: { rpId?: string; session?: AuthSession }) => Promise<void>
+  /** Authenticate with password */
+  authenticatePassword: (accountId: string, password: string) => Promise<void>
   /** Logout and clear session */
   logout: () => Promise<void>
   /** Refresh session if needed */
   refreshSession: () => Promise<void>
   /** Clear any errors */
   clearError: () => void
+  /** Toggle secure mode (ephemeral key signing) */
+  setSecureMode: (enabled: boolean) => void
+  /** Toggle ephemeral key persistence (IndexedDB vs memory) */
+  setPersistEphemeralKeys: (enabled: boolean) => void
+  /** Get the ephemeral public key (for secure mode binding during external auth) */
+  getEphemeralPublicKey: () => Promise<string | undefined>
 }
 
 /**
@@ -69,6 +91,8 @@ export interface KentuckySignerProviderProps {
   storageKeyPrefix?: string
   /** Whether to persist session in localStorage */
   persistSession?: boolean
+  /** Whether to use ephemeral key signing for enhanced security */
+  useEphemeralKeys?: boolean
   /** Children */
   children: ReactNode
 }
@@ -90,19 +114,75 @@ export function KentuckySignerProvider({
   defaultChainId = 1,
   storageKeyPrefix = 'kentucky_signer',
   persistSession = true,
+  useEphemeralKeys = false,
   children,
 }: KentuckySignerProviderProps) {
+  // Load persist ephemeral keys setting from localStorage, default to IndexedDB if available
+  const getInitialPersistSetting = (): boolean => {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(`${storageKeyPrefix}_persist_ephemeral_keys`)
+      if (saved !== null) {
+        return saved === 'true'
+      }
+    }
+    // Default to IndexedDB persistence if available
+    return typeof indexedDB !== 'undefined'
+  }
+
+  // Load secure mode setting from localStorage, falling back to useEphemeralKeys prop
+  const getInitialSecureModeSetting = (): boolean => {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(`${storageKeyPrefix}_secure_mode`)
+      if (saved !== null) {
+        return saved === 'true'
+      }
+    }
+    // Fall back to prop value
+    return useEphemeralKeys
+  }
+
   const [state, setState] = useState<KentuckySignerState>({
     isAuthenticating: false,
     isAuthenticated: false,
     session: null,
     account: null,
     error: null,
+    ephemeralKeyBound: false,
+    secureMode: getInitialSecureModeSetting(),
+    persistEphemeralKeys: getInitialPersistSetting(),
   })
+
+  // Ephemeral key storage instances - we keep both and switch between them
+  const indexedDBStorage = useMemo(
+    () => typeof indexedDB !== 'undefined' ? new IndexedDBEphemeralKeyStorage() : null,
+    []
+  )
+  const memoryStorage = useMemo(() => new MemoryEphemeralKeyStorage(), [])
+
+  // Current active storage based on persist setting
+  const ephemeralKeyStorage = state.persistEphemeralKeys && indexedDBStorage
+    ? indexedDBStorage
+    : memoryStorage
+
+  // Single ephemeral key manager instance that we update storage on
+  const ephemeralKeyManagerRef = useRef<EphemeralKeyManager | null>(null)
+  if (!ephemeralKeyManagerRef.current) {
+    ephemeralKeyManagerRef.current = new EphemeralKeyManager(ephemeralKeyStorage)
+  }
+  const ephemeralKeyManager = ephemeralKeyManagerRef.current
 
   const client = useMemo(
     () => new KentuckySignerClient({ baseUrl }),
     [baseUrl]
+  )
+
+  // Secure client for ephemeral key signing - uses shared key manager
+  const secureClient = useMemo(
+    () => new SecureKentuckySignerClient({
+      baseUrl,
+      ephemeralKeyManager,
+    }),
+    [baseUrl, ephemeralKeyManager]
   )
 
   const storage = useMemo(
@@ -112,11 +192,12 @@ export function KentuckySignerProvider({
 
   // Create account from session
   const createAccount = useCallback(
-    (session: AuthSession): KentuckySignerAccount => {
+    (session: AuthSession, useSecureClient: boolean = false): KentuckySignerAccount => {
       return createKentuckySignerAccount({
         config: { baseUrl, accountId: session.accountId },
         session,
         defaultChainId,
+        secureClient: useSecureClient ? secureClient : undefined,
         onSessionExpired: async () => {
           // Try to refresh the session
           const newSession = await refreshSessionIfNeeded(session, baseUrl, 0)
@@ -131,7 +212,7 @@ export function KentuckySignerProvider({
         },
       })
     },
-    [baseUrl, defaultChainId]
+    [baseUrl, defaultChainId, secureClient]
   )
 
   // Restore session from storage on mount
@@ -148,17 +229,22 @@ export function KentuckySignerProvider({
           // Try to refresh
           try {
             const refreshed = await refreshSessionIfNeeded(session, baseUrl, 0)
-            const account = createAccount(refreshed)
             localStorage.setItem(
               `${storageKeyPrefix}_session`,
               JSON.stringify(refreshed)
             )
-            setState({
-              isAuthenticating: false,
-              isAuthenticated: true,
-              session: refreshed,
-              account,
-              error: null,
+            setState((s) => {
+              const account = createAccount(refreshed, s.secureMode)
+              return {
+                isAuthenticating: false,
+                isAuthenticated: true,
+                session: refreshed,
+                account,
+                error: null,
+                ephemeralKeyBound: false,
+                secureMode: s.secureMode,
+                persistEphemeralKeys: s.persistEphemeralKeys,
+              }
             })
           } catch {
             // Clear invalid session
@@ -167,13 +253,18 @@ export function KentuckySignerProvider({
           return
         }
 
-        const account = createAccount(session)
-        setState({
-          isAuthenticating: false,
-          isAuthenticated: true,
-          session,
-          account,
-          error: null,
+        setState((s) => {
+          const account = createAccount(session, s.secureMode)
+          return {
+            isAuthenticating: false,
+            isAuthenticated: true,
+            session,
+            account,
+            error: null,
+            ephemeralKeyBound: false,
+            secureMode: s.secureMode,
+            persistEphemeralKeys: s.persistEphemeralKeys,
+          }
         })
       } catch {
         localStorage.removeItem(`${storageKeyPrefix}_session`)
@@ -183,19 +274,35 @@ export function KentuckySignerProvider({
     restoreSession()
   }, [storage, storageKeyPrefix, baseUrl, createAccount])
 
-  // Authenticate with passkey
+  // Authenticate with passkey or existing session
   const authenticate = useCallback(
-    async (accountId: string, options?: { rpId?: string }) => {
+    async (accountId: string, options?: { rpId?: string; session?: AuthSession }) => {
       setState((s) => ({ ...s, isAuthenticating: true, error: null }))
 
       try {
-        const session = await authenticateWithPasskey({
-          baseUrl,
-          accountId,
-          rpId: options?.rpId,
-        })
+        let session: AuthSession
+        let ephemeralKeyBound = false
 
-        const account = createAccount(session)
+        if (options?.session) {
+          // Use provided session (no ephemeral binding possible)
+          session = options.session
+        } else {
+          // Get ephemeral public key if secure mode is enabled
+          let ephemeralPublicKey: string | undefined
+          if (state.secureMode) {
+            ephemeralPublicKey = await ephemeralKeyManager.getPublicKey()
+          }
+
+          // Authenticate with passkey
+          session = await authenticateWithPasskey({
+            baseUrl,
+            accountId,
+            rpId: options?.rpId,
+            ephemeralPublicKey,
+          })
+
+          ephemeralKeyBound = !!ephemeralPublicKey
+        }
 
         // Persist session
         if (storage) {
@@ -205,12 +312,18 @@ export function KentuckySignerProvider({
           )
         }
 
-        setState({
-          isAuthenticating: false,
-          isAuthenticated: true,
-          session,
-          account,
-          error: null,
+        setState((s) => {
+          const account = createAccount(session, s.secureMode)
+          return {
+            isAuthenticating: false,
+            isAuthenticated: true,
+            session,
+            account,
+            error: null,
+            ephemeralKeyBound,
+            secureMode: s.secureMode,
+            persistEphemeralKeys: s.persistEphemeralKeys,
+          }
         })
       } catch (error) {
         setState((s) => ({
@@ -221,7 +334,7 @@ export function KentuckySignerProvider({
         throw error
       }
     },
-    [baseUrl, createAccount, storage, storageKeyPrefix]
+    [baseUrl, createAccount, storage, storageKeyPrefix, state.secureMode, ephemeralKeyManager]
   )
 
   // Logout
@@ -239,14 +352,22 @@ export function KentuckySignerProvider({
       localStorage.removeItem(`${storageKeyPrefix}_session`)
     }
 
-    setState({
+    // Clear ephemeral keys if using secure mode
+    if (ephemeralKeyManager) {
+      await ephemeralKeyManager.clear()
+    }
+
+    setState((s) => ({
       isAuthenticating: false,
       isAuthenticated: false,
       session: null,
       account: null,
       error: null,
-    })
-  }, [client, state.session, storage, storageKeyPrefix])
+      ephemeralKeyBound: false,
+      secureMode: s.secureMode,
+      persistEphemeralKeys: s.persistEphemeralKeys,
+    }))
+  }, [client, state.session, storage, storageKeyPrefix, ephemeralKeyManager])
 
   // Refresh session
   const refreshSession = useCallback(async () => {
@@ -256,8 +377,6 @@ export function KentuckySignerProvider({
       const refreshed = await refreshSessionIfNeeded(state.session, baseUrl)
 
       if (refreshed !== state.session) {
-        const account = createAccount(refreshed)
-
         if (storage) {
           localStorage.setItem(
             `${storageKeyPrefix}_session`,
@@ -265,11 +384,14 @@ export function KentuckySignerProvider({
           )
         }
 
-        setState((s) => ({
-          ...s,
-          session: refreshed,
-          account,
-        }))
+        setState((s) => {
+          const account = createAccount(refreshed, s.secureMode)
+          return {
+            ...s,
+            session: refreshed,
+            account,
+          }
+        })
       }
     } catch (error) {
       setState((s) => ({ ...s, error: error as Error }))
@@ -281,15 +403,124 @@ export function KentuckySignerProvider({
     setState((s) => ({ ...s, error: null }))
   }, [])
 
+  // Toggle secure mode - recreates account with new client
+  const setSecureMode = useCallback((enabled: boolean) => {
+    // Persist the setting to localStorage
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(`${storageKeyPrefix}_secure_mode`, String(enabled))
+    }
+
+    setState((s) => {
+      // Recreate account with new secure mode setting if authenticated
+      const newAccount = s.session ? createAccount(s.session, enabled) : null
+      return {
+        ...s,
+        secureMode: enabled,
+        account: newAccount,
+      }
+    })
+  }, [createAccount, storageKeyPrefix])
+
+  // Toggle ephemeral key persistence - migrates key between IndexedDB and memory storage
+  const setPersistEphemeralKeys = useCallback(async (enabled: boolean) => {
+    // Determine the new storage backend
+    const newStorage = enabled && indexedDBStorage
+      ? indexedDBStorage
+      : memoryStorage
+
+    // Migrate the key to the new storage (preserves existing key)
+    await ephemeralKeyManager.migrateStorage(newStorage)
+
+    // Persist the setting to localStorage
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(`${storageKeyPrefix}_persist_ephemeral_keys`, String(enabled))
+    }
+
+    // Update state
+    setState((s) => ({
+      ...s,
+      persistEphemeralKeys: enabled,
+    }))
+  }, [ephemeralKeyManager, storageKeyPrefix, indexedDBStorage, memoryStorage])
+
+  // Get ephemeral public key for external auth flows
+  const getEphemeralPublicKey = useCallback(async (): Promise<string | undefined> => {
+    if (!state.secureMode) {
+      return undefined
+    }
+    return ephemeralKeyManager.getPublicKey()
+  }, [state.secureMode, ephemeralKeyManager])
+
+  // Authenticate with password
+  const authenticatePassword = useCallback(
+    async (accountId: string, password: string) => {
+      setState((s) => ({ ...s, isAuthenticating: true, error: null }))
+
+      try {
+        // Get ephemeral public key if secure mode is enabled
+        let ephemeralPublicKey: string | undefined
+        console.log('[KentuckySigner] authenticatePassword - secureMode:', state.secureMode)
+        if (state.secureMode) {
+          ephemeralPublicKey = await ephemeralKeyManager.getPublicKey()
+          console.log('[KentuckySigner] Got ephemeral public key for binding:', ephemeralPublicKey?.substring(0, 50) + '...')
+        }
+
+        // Authenticate with password
+        const session = await authWithPassword({
+          baseUrl,
+          accountId,
+          password,
+          ephemeralPublicKey,
+        })
+
+        const ephemeralKeyBound = !!ephemeralPublicKey
+
+        // Persist session
+        if (storage) {
+          localStorage.setItem(
+            `${storageKeyPrefix}_session`,
+            JSON.stringify(session)
+          )
+        }
+
+        setState((s) => {
+          const account = createAccount(session, s.secureMode)
+          return {
+            isAuthenticating: false,
+            isAuthenticated: true,
+            session,
+            account,
+            error: null,
+            ephemeralKeyBound,
+            secureMode: s.secureMode,
+            persistEphemeralKeys: s.persistEphemeralKeys,
+          }
+        })
+      } catch (error) {
+        setState((s) => ({
+          ...s,
+          isAuthenticating: false,
+          error: error as Error,
+        }))
+        throw error
+      }
+    },
+    [baseUrl, createAccount, storage, storageKeyPrefix, state.secureMode, ephemeralKeyManager]
+  )
+
   const value: KentuckySignerContextValue = useMemo(
     () => ({
       ...state,
       authenticate,
+      authenticatePassword,
       logout,
       refreshSession,
       clearError,
+      setSecureMode,
+      setPersistEphemeralKeys,
+      getEphemeralPublicKey,
     }),
-    [state, authenticate, logout, refreshSession, clearError]
+    [state, authenticate, authenticatePassword, logout, refreshSession, clearError, setSecureMode, setPersistEphemeralKeys, getEphemeralPublicKey]
   )
 
   return (

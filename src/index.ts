@@ -22,6 +22,27 @@ export {
   createClient,
 } from './client'
 
+// Secure Client (with ephemeral key signing)
+export {
+  SecureKentuckySignerClient,
+  createSecureClient,
+  type SecureClientOptions,
+} from './secure-client'
+
+// Ephemeral Key Management
+export {
+  generateEphemeralKeyPair,
+  signPayload,
+  verifyPayload,
+  isWebCryptoAvailable,
+  EphemeralKeyManager,
+  MemoryEphemeralKeyStorage,
+  IndexedDBEphemeralKeyStorage,
+  type EphemeralKeyPair,
+  type SignedPayload,
+  type EphemeralKeyStorage,
+} from './ephemeral'
+
 // Authentication
 export {
   authenticateWithPasskey,
@@ -43,6 +64,8 @@ export type {
   ChallengeResponse,
   AuthResponse,
   AccountInfoResponse,
+  AccountInfoExtendedResponse,
+  AuthConfig,
   EvmSignatureResponse,
   ApiErrorResponse,
   PasskeyCredential,
@@ -56,6 +79,12 @@ export type {
   AccountCreationResponse,
   CreatePasswordAccountRequest,
   PasswordAuthRequest,
+  AddPasswordRequest,
+  AddPasswordResponse,
+  AddPasskeyRequest,
+  AddPasskeyResponse,
+  RemovePasskeyResponse,
+  AuthResponseWithEphemeral,
 } from './types'
 
 // Utilities

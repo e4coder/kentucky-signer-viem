@@ -164,7 +164,8 @@ export async function authenticateWithPasskey(
   const passkeyCredential = credentialToPasskey(credential)
   const authResponse = await client.authenticatePasskey(
     options.accountId,
-    passkeyCredential
+    passkeyCredential,
+    options.ephemeralPublicKey
   )
 
   // Step 5: Get account info to retrieve addresses
@@ -222,11 +223,11 @@ export async function authenticateWithToken(
  * Register a new passkey for account creation (browser only)
  *
  * @param options - Registration options
- * @returns Registration credential with public key
+ * @returns Registration credential with public key and attestation object
  */
 export async function registerPasskey(
   options: PasskeyRegistrationOptions
-): Promise<PasskeyCredential & { publicKey: string }> {
+): Promise<PasskeyCredential & { publicKey: string; attestationObject: string }> {
   if (!isWebAuthnAvailable()) {
     throw new KentuckySignerError(
       'WebAuthn is not available in this environment',
@@ -294,6 +295,7 @@ export async function registerPasskey(
     credentialId: base64UrlEncode(new Uint8Array(credential.rawId)),
     clientDataJSON: base64UrlEncode(new Uint8Array(response.clientDataJSON)),
     authenticatorData: base64UrlEncode(new Uint8Array(response.getAuthenticatorData())),
+    attestationObject: base64UrlEncode(new Uint8Array(response.attestationObject)),
     signature: '', // Not applicable for registration
     publicKey: base64UrlEncode(new Uint8Array(publicKeyBytes)),
   }
@@ -357,11 +359,19 @@ export async function authenticateWithPassword(
 ): Promise<AuthSession> {
   const client = new KentuckySignerClient({ baseUrl: options.baseUrl })
 
-  // Authenticate with password
-  const authResponse = await client.authenticatePassword({
+  // Build auth request with optional ephemeral key
+  const authRequest: { account_id: string; password: string; ephemeral_public_key?: string } = {
     account_id: options.accountId,
     password: options.password,
-  })
+  }
+
+  // Add ephemeral public key if provided (for secure mode binding)
+  if (options.ephemeralPublicKey) {
+    authRequest.ephemeral_public_key = options.ephemeralPublicKey
+  }
+
+  // Authenticate with password
+  const authResponse = await client.authenticatePassword(authRequest)
 
   // Get account info to retrieve addresses
   const accountInfo = await client.getAccountInfo(

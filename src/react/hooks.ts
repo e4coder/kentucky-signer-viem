@@ -34,10 +34,17 @@ export function useKentuckySigner() {
     session: context.session,
     account: context.account,
     error: context.error,
+    ephemeralKeyBound: context.ephemeralKeyBound,
     authenticate: context.authenticate,
+    authenticatePassword: context.authenticatePassword,
     logout: context.logout,
     refreshSession: context.refreshSession,
     clearError: context.clearError,
+    secureMode: context.secureMode,
+    setSecureMode: context.setSecureMode,
+    persistEphemeralKeys: context.persistEphemeralKeys,
+    setPersistEphemeralKeys: context.setPersistEphemeralKeys,
+    getEphemeralPublicKey: context.getEphemeralPublicKey,
   }
 }
 

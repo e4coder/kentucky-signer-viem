@@ -3,6 +3,7 @@ import type {
   ChallengeResponse,
   AuthResponse,
   AccountInfoResponse,
+  AccountInfoExtendedResponse,
   EvmSignatureResponse,
   ApiErrorResponse,
   PasskeyCredential,
@@ -10,6 +11,11 @@ import type {
   SignEvmRequest,
   CreatePasswordAccountRequest,
   PasswordAuthRequest,
+  AddPasswordRequest,
+  AddPasswordResponse,
+  AddPasskeyRequest,
+  AddPasskeyResponse,
+  RemovePasskeyResponse,
 } from './types'
 import type { Hex } from 'viem'
 
@@ -108,22 +114,30 @@ export class KentuckySignerClient {
    *
    * @param accountId - Account ID to authenticate
    * @param credential - WebAuthn credential from navigator.credentials.get()
+   * @param ephemeralPublicKey - Optional ephemeral public key for secure mode binding
    * @returns Authentication response with JWT token
    */
   async authenticatePasskey(
     accountId: string,
-    credential: PasskeyCredential
+    credential: PasskeyCredential,
+    ephemeralPublicKey?: string
   ): Promise<AuthResponse> {
+    const body: Record<string, string | undefined> = {
+      account_id: accountId,
+      credential_id: credential.credentialId,
+      client_data_json: credential.clientDataJSON,
+      authenticator_data: credential.authenticatorData,
+      signature: credential.signature,
+      user_handle: credential.userHandle,
+    }
+
+    if (ephemeralPublicKey) {
+      body.ephemeral_public_key = ephemeralPublicKey
+    }
+
     return this.request<AuthResponse>('/api/auth/passkey', {
       method: 'POST',
-      body: JSON.stringify({
-        account_id: accountId,
-        credential_id: credential.credentialId,
-        client_data_json: credential.clientDataJSON,
-        authenticator_data: credential.authenticatorData,
-        signature: credential.signature,
-        user_handle: credential.userHandle,
-      }),
+      body: JSON.stringify(body),
     })
   }
 
@@ -224,20 +238,23 @@ export class KentuckySignerClient {
   /**
    * Create a new account with passkey authentication
    *
-   * @param credential - WebAuthn credential from navigator.credentials.create()
+   * @param attestationObject - Base64url encoded attestation object from WebAuthn
+   * @param label - Optional label for the passkey (defaults to "Owner Passkey")
    * @returns Account creation response with account ID and addresses
    */
   async createAccountWithPasskey(
-    credential: PasskeyCredential & { publicKey: string }
+    attestationObject: string,
+    label?: string
   ): Promise<AccountCreationResponse> {
+    const body: Record<string, string> = {
+      attestation_object: attestationObject,
+    }
+    if (label) {
+      body.label = label
+    }
     return this.request<AccountCreationResponse>('/api/accounts/create/passkey', {
       method: 'POST',
-      body: JSON.stringify({
-        credential_id: credential.credentialId,
-        public_key: credential.publicKey,
-        client_data_json: credential.clientDataJSON,
-        authenticator_data: credential.authenticatorData,
-      }),
+      body: JSON.stringify(body),
     })
   }
 
@@ -266,6 +283,84 @@ export class KentuckySignerClient {
     return this.request<AuthResponse>('/api/auth/password', {
       method: 'POST',
       body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * Add password authentication to an existing account
+   *
+   * Enables password-based authentication for an account that was created
+   * with passkey-only authentication.
+   *
+   * @param accountId - Account ID
+   * @param request - Password and confirmation
+   * @param token - JWT token
+   * @returns Success response
+   */
+  async addPassword(
+    accountId: string,
+    request: AddPasswordRequest,
+    token: string
+  ): Promise<AddPasswordResponse> {
+    return this.request<AddPasswordResponse>(`/api/accounts/${accountId}/password`, {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * Get extended account information including auth config
+   *
+   * @param accountId - Account ID
+   * @param token - JWT token
+   * @returns Extended account info with auth config and passkey count
+   */
+  async getAccountInfoExtended(accountId: string, token: string): Promise<AccountInfoExtendedResponse> {
+    return this.request<AccountInfoExtendedResponse>(`/api/accounts/${accountId}`, {
+      method: 'GET',
+      token,
+    })
+  }
+
+  /**
+   * Add a recovery passkey to an existing account
+   *
+   * @param accountId - Account ID
+   * @param request - Passkey data (COSE public key, credential ID, algorithm, label)
+   * @param token - JWT token
+   * @returns Success response with label
+   */
+  async addPasskey(
+    accountId: string,
+    request: AddPasskeyRequest,
+    token: string
+  ): Promise<AddPasskeyResponse> {
+    return this.request<AddPasskeyResponse>(`/api/accounts/${accountId}/passkeys`, {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * Remove a passkey from an account
+   *
+   * Note: Cannot remove the owner passkey (index 0)
+   *
+   * @param accountId - Account ID
+   * @param passkeyIndex - Index of passkey to remove (1-3 for recovery passkeys)
+   * @param token - JWT token
+   * @returns Success response
+   */
+  async removePasskey(
+    accountId: string,
+    passkeyIndex: number,
+    token: string
+  ): Promise<RemovePasskeyResponse> {
+    return this.request<RemovePasskeyResponse>(`/api/accounts/${accountId}/passkeys/${passkeyIndex}`, {
+      method: 'DELETE',
+      token,
     })
   }
 

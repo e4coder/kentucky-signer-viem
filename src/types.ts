@@ -129,6 +129,8 @@ export interface PasskeyAuthOptions {
   rpId?: string
   /** Credential IDs to allow (if known) */
   allowCredentials?: string[]
+  /** Optional ephemeral public key for secure mode binding (base64url encoded) */
+  ephemeralPublicKey?: string
 }
 
 /**
@@ -202,6 +204,8 @@ export interface PasswordAuthOptions {
   accountId: string
   /** Password for authentication */
   password: string
+  /** Optional ephemeral public key for secure mode binding (base64url encoded) */
+  ephemeralPublicKey?: string
 }
 
 /**
@@ -234,4 +238,84 @@ export interface PasswordAuthRequest {
   account_id: string
   /** Password */
   password: string
+}
+
+/**
+ * Add password request
+ */
+export interface AddPasswordRequest {
+  /** Password for the account (8-128 characters) */
+  password: string
+  /** Password confirmation (must match password) */
+  confirmation: string
+}
+
+/**
+ * Add password response
+ */
+export interface AddPasswordResponse {
+  success: boolean
+  message: string
+}
+
+/**
+ * Add passkey request (using attestation object - simpler)
+ */
+export interface AddPasskeyRequest {
+  /** WebAuthn attestation object (base64url) - server extracts COSE key automatically */
+  attestation_object: string
+  /** User-friendly label for the passkey */
+  label?: string
+}
+
+/**
+ * Add passkey response
+ */
+export interface AddPasskeyResponse {
+  success: boolean
+  message: string
+  label: string
+}
+
+/**
+ * Remove passkey response
+ */
+export interface RemovePasskeyResponse {
+  success: boolean
+  message: string
+  passkey_index: number
+}
+
+/**
+ * Extended authentication response with ephemeral key binding
+ */
+export interface AuthResponseWithEphemeral extends AuthResponse {
+  /** Whether ephemeral key was bound to the token */
+  ephemeral_bound: boolean
+}
+
+/**
+ * Auth configuration from account info
+ */
+export interface AuthConfig {
+  passkey: boolean
+  password: boolean
+  pin_4: boolean
+  pin_6: boolean
+  totp: boolean
+}
+
+/**
+ * Extended account info response with auth config
+ */
+export interface AccountInfoExtendedResponse {
+  success: boolean
+  account_id: string
+  addresses: {
+    evm: string
+    bitcoin: string
+    solana: string
+  }
+  auth_config: AuthConfig
+  passkey_count: number
 }

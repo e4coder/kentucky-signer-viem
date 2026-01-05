@@ -19,6 +19,8 @@ import {
 import { toAccount } from 'viem/accounts'
 import type { AuthSession, KentuckySignerConfig } from './types'
 import { KentuckySignerClient, KentuckySignerError } from './client'
+import { SecureKentuckySignerClient } from './secure-client'
+import type { EphemeralKeyManager } from './ephemeral'
 
 /**
  * Options for creating a Kentucky Signer account
@@ -32,6 +34,8 @@ export interface KentuckySignerAccountOptions {
   defaultChainId?: number
   /** Callback when session needs refresh */
   onSessionExpired?: () => Promise<AuthSession>
+  /** Optional secure client for ephemeral key signing */
+  secureClient?: SecureKentuckySignerClient
 }
 
 /**
@@ -81,10 +85,11 @@ export interface KentuckySignerAccount extends LocalAccount<'kentuckySigner'> {
 export function createKentuckySignerAccount(
   options: KentuckySignerAccountOptions
 ): KentuckySignerAccount {
-  const { config, defaultChainId = 1, onSessionExpired } = options
+  const { config, defaultChainId = 1, onSessionExpired, secureClient } = options
   let session = options.session
 
-  const client = new KentuckySignerClient({ baseUrl: config.baseUrl })
+  // Use secure client if provided, otherwise use standard client
+  const client = secureClient ?? new KentuckySignerClient({ baseUrl: config.baseUrl })
 
   /**
    * Get current token, refreshing if needed
@@ -106,7 +111,7 @@ export function createKentuckySignerAccount(
   }
 
   /**
-   * Sign a hash using Kentucky Signer
+   * Sign a hash using Kentucky Signer and return full signature
    */
   async function signHash(hash: Hex, chainId: number): Promise<Hex> {
     const token = await getToken()
@@ -118,14 +123,19 @@ export function createKentuckySignerAccount(
   }
 
   /**
-   * Parse signature components from full signature
+   * Sign a hash using Kentucky Signer and return signature components
    */
-  function parseSignature(signature: Hex): { r: Hex; s: Hex; v: bigint } {
-    // Signature is 65 bytes: r (32) + s (32) + v (1)
-    const r = `0x${signature.slice(2, 66)}` as Hex
-    const s = `0x${signature.slice(66, 130)}` as Hex
-    const v = BigInt(`0x${signature.slice(130, 132)}`)
-    return { r, s, v }
+  async function signHashWithComponents(hash: Hex, chainId: number): Promise<{ r: Hex; s: Hex; v: number }> {
+    const token = await getToken()
+    const response = await client.signEvmTransaction(
+      { tx_hash: hash, chain_id: chainId },
+      token
+    )
+    return {
+      r: response.signature.r,
+      s: response.signature.s,
+      v: response.signature.v,
+    }
   }
 
   const account = toAccount({
@@ -159,11 +169,8 @@ export function createKentuckySignerAccount(
       // Hash the serialized transaction
       const txHash = keccak256(serializedUnsigned)
 
-      // Sign the hash
-      const signature = await signHash(txHash, chainId)
-
-      // Parse signature components
-      const { r, s, v } = parseSignature(signature)
+      // Sign the hash and get components directly from API
+      const { r, s, v } = await signHashWithComponents(txHash, chainId)
 
       // For EIP-1559 and EIP-2930 transactions, v is 0 or 1
       // For legacy transactions, v is chainId * 2 + 35 + recovery
@@ -174,10 +181,10 @@ export function createKentuckySignerAccount(
         transaction.type === 'eip4844' ||
         transaction.type === 'eip7702'
       ) {
-        yParity = Number(v) - 27 // Convert from 27/28 to 0/1
+        yParity = v >= 27 ? v - 27 : v // Convert from 27/28 to 0/1 if needed
       } else {
         // Legacy transaction - v already includes chain ID
-        yParity = Number(v)
+        yParity = v
       }
 
       // Serialize with signature
