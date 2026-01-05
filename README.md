@@ -270,32 +270,39 @@ Set up trusted guardians for account recovery:
 ```typescript
 const client = new KentuckySignerClient({ baseUrl })
 
-// Add a guardian
-await client.addGuardian(accountId, {
-  guardian_account_id: 'guardian_hex_id',
+// Add a guardian (requires WebAuthn attestation from guardian's device)
+const { guardian_index, guardian_count } = await client.addGuardian({
+  attestation_object: guardianAttestationBase64url,
   label: 'My Friend',
 }, token)
 
 // List guardians
-const { guardians } = await client.getGuardians(accountId, token)
+const { guardians } = await client.getGuardians(token)
+// guardians: [{ index: 1, label: 'My Friend' }, ...]
 
-// Initiate recovery (when locked out)
-const recovery = await client.initiateRecovery({
+// Initiate recovery (when locked out - register new passkey first)
+const recovery = await client.initiateRecovery(
+  accountId,
+  newPasskeyAttestationObject,
+  'New Owner Passkey'
+)
+// Returns: { challenges, guardian_count, threshold, timelock_seconds }
+
+// Guardian signs their challenge with their passkey
+await client.verifyGuardian({
   account_id: accountId,
-  new_password: 'new-secure-password',
+  guardian_index: 1,
+  authenticator_data: authDataBase64url,
+  client_data_json: clientDataBase64url,
+  signature: signatureBase64url,
 })
 
-// Guardian approves recovery
-await client.verifyGuardianRecovery({
-  recovery_id: recovery.recovery_id,
-  guardian_account_id: guardianId,
-  signature: guardianSignature,
-}, guardianToken)
+// Check recovery status
+const status = await client.getRecoveryStatus(accountId)
+// { verified_count, threshold, can_complete, timelock_remaining }
 
-// Complete recovery after threshold met
-await client.completeRecovery({
-  recovery_id: recovery.recovery_id,
-}, token)
+// Complete recovery after threshold met and timelock expired
+await client.completeRecovery(accountId)
 ```
 
 ## API Reference
@@ -328,8 +335,9 @@ await client.completeRecovery({
 
 #### Authentication
 - `getChallenge(accountId)` - Get WebAuthn challenge
-- `authenticatePasskey(accountId, credential)` - Authenticate with passkey
-- `authenticatePassword(accountId, password)` - Authenticate with password
+- `authenticatePasskey(accountId, credential, ephemeralPublicKey?)` - Authenticate with passkey
+- `authenticatePassword(request)` - Authenticate with password (`{ account_id, password }`)
+- `refreshToken(token)` - Refresh JWT token
 - `logout(token)` - Invalidate session
 
 #### Signing
@@ -338,9 +346,10 @@ await client.completeRecovery({
 
 #### Account Management
 - `getAccountInfo(accountId, token)` - Get account info
+- `getAccountInfoExtended(accountId, token)` - Get account info with auth config
 - `addPassword(accountId, request, token)` - Add password auth
 - `addPasskey(accountId, request, token)` - Add passkey
-- `removePasskey(accountId, credentialId, token)` - Remove passkey
+- `removePasskey(accountId, passkeyIndex, token)` - Remove passkey by index
 
 #### Two-Factor Authentication
 - `get2FAStatus(token)` - Get 2FA status
@@ -351,12 +360,14 @@ await client.completeRecovery({
 - `disablePIN(pin, token)` - Disable PIN
 
 #### Guardian Recovery
-- `addGuardian(accountId, request, token)` - Add guardian
-- `removeGuardian(accountId, guardianId, token)` - Remove guardian
-- `getGuardians(accountId, token)` - List guardians
-- `initiateRecovery(request)` - Start recovery
-- `verifyGuardianRecovery(request, token)` - Guardian approval
-- `completeRecovery(request, token)` - Complete recovery
+- `addGuardian(request, token)` - Add guardian passkey
+- `removeGuardian(guardianIndex, token)` - Remove guardian
+- `getGuardians(token)` - List guardians
+- `initiateRecovery(accountId, attestationObject, label?)` - Start recovery
+- `verifyGuardian(request)` - Submit guardian signature
+- `getRecoveryStatus(accountId)` - Check recovery status
+- `completeRecovery(accountId)` - Complete recovery
+- `cancelRecovery(token)` - Cancel recovery (owner only)
 
 ## Error Handling
 
