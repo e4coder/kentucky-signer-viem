@@ -13,6 +13,8 @@ export {
   createServerAccount,
   type KentuckySignerAccount,
   type KentuckySignerAccountOptions,
+  type TwoFactorCodes,
+  type TwoFactorCallback,
 } from './account'
 
 // Client
@@ -85,6 +87,31 @@ export type {
   AddPasskeyResponse,
   RemovePasskeyResponse,
   AuthResponseWithEphemeral,
+  // Guardian types
+  GuardianInfo,
+  AddGuardianRequest,
+  AddGuardianResponse,
+  RemoveGuardianResponse,
+  GetGuardiansResponse,
+  // Recovery types
+  InitiateRecoveryRequest,
+  InitiateRecoveryResponse,
+  VerifyGuardianRequest,
+  VerifyGuardianResponse,
+  RecoveryStatusRequest,
+  RecoveryStatusResponse,
+  CompleteRecoveryRequest,
+  CompleteRecoveryResponse,
+  CancelRecoveryResponse,
+  // 2FA types
+  TwoFactorStatusResponse,
+  TotpSetupResponse,
+  TotpEnableRequest,
+  TwoFactorResponse,
+  TwoFactorVerifyResponse,
+  PinSetupRequest,
+  PinSetupResponse,
+  SignEvmRequestWith2FA,
 } from './types'
 
 // Utilities

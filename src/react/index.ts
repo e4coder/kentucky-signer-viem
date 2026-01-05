@@ -15,6 +15,7 @@ export {
   type KentuckySignerState,
   type KentuckySignerActions,
   type KentuckySignerContextValue,
+  type TwoFactorPromptState,
 } from './context'
 
 // Hooks

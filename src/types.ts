@@ -318,4 +318,252 @@ export interface AccountInfoExtendedResponse {
   }
   auth_config: AuthConfig
   passkey_count: number
+  guardian_count?: number
+  recovery_active?: boolean
+}
+
+// ============================================================================
+// Guardian Management Types
+// ============================================================================
+
+/**
+ * Guardian info
+ */
+export interface GuardianInfo {
+  index: number
+  label: string
+}
+
+/**
+ * Add guardian request
+ */
+export interface AddGuardianRequest {
+  /** WebAuthn attestation object (base64url) */
+  attestation_object: string
+  /** User-friendly label for the guardian */
+  label?: string
+}
+
+/**
+ * Add guardian response
+ */
+export interface AddGuardianResponse {
+  success: boolean
+  guardian_index: number
+  guardian_count: number
+}
+
+/**
+ * Remove guardian response
+ */
+export interface RemoveGuardianResponse {
+  success: boolean
+  guardian_count: number
+}
+
+/**
+ * Get guardians response
+ */
+export interface GetGuardiansResponse {
+  success: boolean
+  guardian_count: number
+  guardians: GuardianInfo[]
+}
+
+// ============================================================================
+// Account Recovery Types
+// ============================================================================
+
+/**
+ * Initiate recovery request
+ */
+export interface InitiateRecoveryRequest {
+  /** Account ID to recover */
+  account_id: string
+  /** WebAuthn attestation object for new owner passkey (base64url) */
+  attestation_object: string
+  /** Label for new owner passkey */
+  label?: string
+}
+
+/**
+ * Initiate recovery response
+ */
+export interface InitiateRecoveryResponse {
+  success: boolean
+  /** Challenges for each guardian to sign (base64url) */
+  challenges: string[]
+  /** Number of guardians registered */
+  guardian_count: number
+  /** Number of guardian signatures required */
+  threshold: number
+  /** Seconds to wait after threshold reached before completion */
+  timelock_seconds: number
+}
+
+/**
+ * Verify guardian signature request
+ */
+export interface VerifyGuardianRequest {
+  /** Account ID being recovered */
+  account_id: string
+  /** Index of guardian (1-3) */
+  guardian_index: number
+  /** WebAuthn authenticator data (base64url) */
+  authenticator_data: string
+  /** WebAuthn client data JSON (base64url) */
+  client_data_json: string
+  /** WebAuthn signature (base64url) */
+  signature: string
+}
+
+/**
+ * Verify guardian response
+ */
+export interface VerifyGuardianResponse {
+  success: boolean
+  /** Number of guardians who have verified */
+  verified_count: number
+  /** Number of guardians required */
+  threshold: number
+}
+
+/**
+ * Recovery status request
+ */
+export interface RecoveryStatusRequest {
+  /** Account ID to check */
+  account_id: string
+}
+
+/**
+ * Recovery status response
+ */
+export interface RecoveryStatusResponse {
+  success: boolean
+  /** Whether recovery is in progress */
+  recovery_active: boolean
+  /** Number of guardians who have verified */
+  verified_count: number
+  /** Number of guardians required */
+  threshold: number
+  /** Whether recovery can be completed now */
+  can_complete: boolean
+  /** Seconds remaining until timelock expires (0 if expired) */
+  timelock_remaining: number
+  /** Number of guardians on this account */
+  guardian_count: number
+  /** Challenge for each guardian to sign (base64url encoded) */
+  guardian_challenges: string[]
+  /** Indices of guardians who have verified */
+  verified_guardians: number[]
+}
+
+/**
+ * Complete recovery request
+ */
+export interface CompleteRecoveryRequest {
+  /** Account ID to complete recovery for */
+  account_id: string
+}
+
+/**
+ * Complete recovery response
+ */
+export interface CompleteRecoveryResponse {
+  success: boolean
+  message: string
+}
+
+/**
+ * Cancel recovery response
+ */
+export interface CancelRecoveryResponse {
+  success: boolean
+  message: string
+}
+
+// ============================================================================
+// Two-Factor Authentication (2FA)
+// ============================================================================
+
+/**
+ * 2FA status response
+ */
+export interface TwoFactorStatusResponse {
+  success: boolean
+  /** Whether TOTP is enabled */
+  totp_enabled: boolean
+  /** Whether PIN is enabled */
+  pin_enabled: boolean
+  /** PIN length if enabled (4 or 6), 0 if not enabled */
+  pin_length: number
+}
+
+/**
+ * TOTP setup response
+ */
+export interface TotpSetupResponse {
+  success: boolean
+  /** otpauth:// URI for QR code generation */
+  uri: string
+  /** Base32 encoded secret for manual entry */
+  secret: string
+  /** Instructions for the user */
+  message: string
+}
+
+/**
+ * TOTP enable request
+ */
+export interface TotpEnableRequest {
+  /** 6-digit TOTP code from authenticator app */
+  code: string
+}
+
+/**
+ * Generic 2FA response
+ */
+export interface TwoFactorResponse {
+  success: boolean
+  message: string
+}
+
+/**
+ * TOTP/PIN verify response
+ */
+export interface TwoFactorVerifyResponse {
+  success: boolean
+  /** Whether the code/pin was valid */
+  valid: boolean
+  /** Optional message if invalid */
+  message?: string
+}
+
+/**
+ * PIN setup request
+ */
+export interface PinSetupRequest {
+  /** PIN (4 or 6 digits) */
+  pin: string
+}
+
+/**
+ * PIN setup response
+ */
+export interface PinSetupResponse {
+  success: boolean
+  message: string
+  /** Length of the PIN that was set */
+  pin_length: number
+}
+
+/**
+ * Sign request with optional 2FA codes
+ */
+export interface SignEvmRequestWith2FA extends SignEvmRequest {
+  /** TOTP code (required if TOTP is enabled) */
+  totp_code?: string
+  /** PIN (required if PIN is enabled) */
+  pin?: string
 }

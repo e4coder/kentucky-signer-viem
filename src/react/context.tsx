@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { AuthSession } from '../types'
+import type { TwoFactorCodes } from '../account'
 import { KentuckySignerClient } from '../client'
 import { SecureKentuckySignerClient } from '../secure-client'
 import {
@@ -27,6 +28,22 @@ import {
   IndexedDBEphemeralKeyStorage,
   MemoryEphemeralKeyStorage,
 } from '../ephemeral'
+
+/**
+ * 2FA prompt requirements
+ */
+export interface TwoFactorPromptState {
+  /** Whether the 2FA prompt is visible */
+  isVisible: boolean
+  /** Whether TOTP is required */
+  totpRequired: boolean
+  /** Whether PIN is required */
+  pinRequired: boolean
+  /** Expected PIN length (4 or 6) */
+  pinLength: number
+  /** Callback to resolve with codes */
+  resolve?: (codes: TwoFactorCodes | null) => void
+}
 
 /**
  * Kentucky Signer context state
@@ -48,6 +65,8 @@ export interface KentuckySignerState {
   secureMode: boolean
   /** Whether ephemeral keys are persisted in IndexedDB (survives refresh) */
   persistEphemeralKeys: boolean
+  /** 2FA prompt state */
+  twoFactorPrompt: TwoFactorPromptState
 }
 
 /**
@@ -70,6 +89,10 @@ export interface KentuckySignerActions {
   setPersistEphemeralKeys: (enabled: boolean) => void
   /** Get the ephemeral public key (for secure mode binding during external auth) */
   getEphemeralPublicKey: () => Promise<string | undefined>
+  /** Submit 2FA codes (called by 2FA prompt UI) */
+  submit2FA: (codes: TwoFactorCodes) => void
+  /** Cancel 2FA prompt */
+  cancel2FA: () => void
 }
 
 /**
@@ -141,6 +164,14 @@ export function KentuckySignerProvider({
     return useEphemeralKeys
   }
 
+  // Default 2FA prompt state
+  const defaultTwoFactorPrompt: TwoFactorPromptState = {
+    isVisible: false,
+    totpRequired: false,
+    pinRequired: false,
+    pinLength: 6,
+  }
+
   const [state, setState] = useState<KentuckySignerState>({
     isAuthenticating: false,
     isAuthenticated: false,
@@ -150,6 +181,7 @@ export function KentuckySignerProvider({
     ephemeralKeyBound: false,
     secureMode: getInitialSecureModeSetting(),
     persistEphemeralKeys: getInitialPersistSetting(),
+    twoFactorPrompt: defaultTwoFactorPrompt,
   })
 
   // Ephemeral key storage instances - we keep both and switch between them
@@ -190,6 +222,26 @@ export function KentuckySignerProvider({
     [persistSession, storageKeyPrefix]
   )
 
+  // 2FA callback handler - shows prompt and waits for user input
+  const handle2FARequired = useCallback(async (requirements: {
+    totpRequired: boolean
+    pinRequired: boolean
+    pinLength: number
+  }): Promise<TwoFactorCodes | null> => {
+    return new Promise((resolve) => {
+      setState((s) => ({
+        ...s,
+        twoFactorPrompt: {
+          isVisible: true,
+          totpRequired: requirements.totpRequired,
+          pinRequired: requirements.pinRequired,
+          pinLength: requirements.pinLength,
+          resolve,
+        },
+      }))
+    })
+  }, [])
+
   // Create account from session
   const createAccount = useCallback(
     (session: AuthSession, useSecureClient: boolean = false): KentuckySignerAccount => {
@@ -210,9 +262,10 @@ export function KentuckySignerProvider({
           }))
           return newSession
         },
+        on2FARequired: handle2FARequired,
       })
     },
-    [baseUrl, defaultChainId, secureClient]
+    [baseUrl, defaultChainId, secureClient, handle2FARequired]
   )
 
   // Restore session from storage on mount
@@ -244,6 +297,7 @@ export function KentuckySignerProvider({
                 ephemeralKeyBound: false,
                 secureMode: s.secureMode,
                 persistEphemeralKeys: s.persistEphemeralKeys,
+                twoFactorPrompt: s.twoFactorPrompt,
               }
             })
           } catch {
@@ -264,6 +318,7 @@ export function KentuckySignerProvider({
             ephemeralKeyBound: false,
             secureMode: s.secureMode,
             persistEphemeralKeys: s.persistEphemeralKeys,
+            twoFactorPrompt: s.twoFactorPrompt,
           }
         })
       } catch {
@@ -323,6 +378,7 @@ export function KentuckySignerProvider({
             ephemeralKeyBound,
             secureMode: s.secureMode,
             persistEphemeralKeys: s.persistEphemeralKeys,
+            twoFactorPrompt: s.twoFactorPrompt,
           }
         })
       } catch (error) {
@@ -366,6 +422,7 @@ export function KentuckySignerProvider({
       ephemeralKeyBound: false,
       secureMode: s.secureMode,
       persistEphemeralKeys: s.persistEphemeralKeys,
+      twoFactorPrompt: defaultTwoFactorPrompt,
     }))
   }, [client, state.session, storage, storageKeyPrefix, ephemeralKeyManager])
 
@@ -494,6 +551,7 @@ export function KentuckySignerProvider({
             ephemeralKeyBound,
             secureMode: s.secureMode,
             persistEphemeralKeys: s.persistEphemeralKeys,
+            twoFactorPrompt: s.twoFactorPrompt,
           }
         })
       } catch (error) {
@@ -508,6 +566,30 @@ export function KentuckySignerProvider({
     [baseUrl, createAccount, storage, storageKeyPrefix, state.secureMode, ephemeralKeyManager]
   )
 
+  // Submit 2FA codes
+  const submit2FA = useCallback((codes: TwoFactorCodes) => {
+    const { resolve } = state.twoFactorPrompt
+    if (resolve) {
+      resolve(codes)
+    }
+    setState((s) => ({
+      ...s,
+      twoFactorPrompt: defaultTwoFactorPrompt,
+    }))
+  }, [state.twoFactorPrompt])
+
+  // Cancel 2FA prompt
+  const cancel2FA = useCallback(() => {
+    const { resolve } = state.twoFactorPrompt
+    if (resolve) {
+      resolve(null)
+    }
+    setState((s) => ({
+      ...s,
+      twoFactorPrompt: defaultTwoFactorPrompt,
+    }))
+  }, [state.twoFactorPrompt])
+
   const value: KentuckySignerContextValue = useMemo(
     () => ({
       ...state,
@@ -519,8 +601,10 @@ export function KentuckySignerProvider({
       setSecureMode,
       setPersistEphemeralKeys,
       getEphemeralPublicKey,
+      submit2FA,
+      cancel2FA,
     }),
-    [state, authenticate, authenticatePassword, logout, refreshSession, clearError, setSecureMode, setPersistEphemeralKeys, getEphemeralPublicKey]
+    [state, authenticate, authenticatePassword, logout, refreshSession, clearError, setSecureMode, setPersistEphemeralKeys, getEphemeralPublicKey, submit2FA, cancel2FA]
   )
 
   return (

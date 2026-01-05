@@ -280,6 +280,20 @@ export class SecureKentuckySignerClient {
   }
 
   /**
+   * Sign an EVM transaction hash with 2FA (signed request)
+   */
+  async signEvmTransactionWith2FA(
+    request: SignEvmRequest & { totp_code?: string; pin?: string },
+    token: string
+  ): Promise<EvmSignatureResponse> {
+    return this.request<EvmSignatureResponse>('/api/sign/evm', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
    * Sign a raw hash for EVM (signed request)
    */
   async signHash(hash: Hex, chainId: number, token: string): Promise<Hex> {

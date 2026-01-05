@@ -9,6 +9,7 @@ import type {
   PasskeyCredential,
   AccountCreationResponse,
   SignEvmRequest,
+  SignEvmRequestWith2FA,
   CreatePasswordAccountRequest,
   PasswordAuthRequest,
   AddPasswordRequest,
@@ -16,6 +17,21 @@ import type {
   AddPasskeyRequest,
   AddPasskeyResponse,
   RemovePasskeyResponse,
+  AddGuardianRequest,
+  AddGuardianResponse,
+  RemoveGuardianResponse,
+  GetGuardiansResponse,
+  InitiateRecoveryResponse,
+  VerifyGuardianRequest,
+  VerifyGuardianResponse,
+  RecoveryStatusResponse,
+  CompleteRecoveryResponse,
+  CancelRecoveryResponse,
+  TwoFactorStatusResponse,
+  TotpSetupResponse,
+  TwoFactorResponse,
+  TwoFactorVerifyResponse,
+  PinSetupResponse,
 } from './types'
 import type { Hex } from 'viem'
 
@@ -390,6 +406,314 @@ export class KentuckySignerClient {
       method: 'GET',
     })
     return response.version
+  }
+
+  // ============================================================================
+  // Guardian Management
+  // ============================================================================
+
+  /**
+   * Add a guardian passkey to an account
+   *
+   * Guardians can participate in account recovery but cannot access the wallet.
+   * An account can have up to 3 guardians (indices 1-3).
+   *
+   * @param request - Guardian data (attestation object and optional label)
+   * @param token - JWT token
+   * @returns Success response with guardian index and count
+   */
+  async addGuardian(
+    request: AddGuardianRequest,
+    token: string
+  ): Promise<AddGuardianResponse> {
+    return this.request<AddGuardianResponse>('/api/guardians/add', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * Remove a guardian passkey from an account
+   *
+   * Cannot remove guardians during an active recovery.
+   *
+   * @param guardianIndex - Index of guardian to remove (1-3)
+   * @param token - JWT token
+   * @returns Success response with remaining guardian count
+   */
+  async removeGuardian(
+    guardianIndex: number,
+    token: string
+  ): Promise<RemoveGuardianResponse> {
+    return this.request<RemoveGuardianResponse>('/api/guardians/remove', {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ guardian_index: guardianIndex }),
+    })
+  }
+
+  /**
+   * Get guardians for an account
+   *
+   * @param token - JWT token
+   * @returns Guardian list with indices and labels
+   */
+  async getGuardians(token: string): Promise<GetGuardiansResponse> {
+    return this.request<GetGuardiansResponse>('/api/guardians', {
+      method: 'GET',
+      token,
+    })
+  }
+
+  // ============================================================================
+  // Account Recovery
+  // ============================================================================
+
+  /**
+   * Initiate account recovery
+   *
+   * Call this when you've lost access to your account. You'll need to register
+   * a new passkey which will become the new owner passkey after recovery completes.
+   *
+   * @param accountId - Account ID to recover
+   * @param attestationObject - WebAuthn attestation object for new owner passkey
+   * @param label - Optional label for new owner passkey
+   * @returns Challenges for guardians to sign, threshold, and timelock info
+   */
+  async initiateRecovery(
+    accountId: string,
+    attestationObject: string,
+    label?: string
+  ): Promise<InitiateRecoveryResponse> {
+    const body: Record<string, string> = {
+      account_id: accountId,
+      attestation_object: attestationObject,
+    }
+    if (label) {
+      body.label = label
+    }
+    return this.request<InitiateRecoveryResponse>('/api/recovery/initiate', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+  }
+
+  /**
+   * Submit a guardian signature for recovery
+   *
+   * Each guardian must sign their challenge using their passkey.
+   *
+   * @param request - Guardian signature data
+   * @returns Current verification status
+   */
+  async verifyGuardian(request: VerifyGuardianRequest): Promise<VerifyGuardianResponse> {
+    return this.request<VerifyGuardianResponse>('/api/recovery/verify', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * Get recovery status for an account
+   *
+   * @param accountId - Account ID to check
+   * @returns Recovery status including verification count and timelock
+   */
+  async getRecoveryStatus(accountId: string): Promise<RecoveryStatusResponse> {
+    return this.request<RecoveryStatusResponse>('/api/recovery/status', {
+      method: 'POST',
+      body: JSON.stringify({ account_id: accountId }),
+    })
+  }
+
+  /**
+   * Complete account recovery
+   *
+   * Call this after enough guardians have verified and the timelock has expired.
+   * The new owner passkey will replace the old one.
+   *
+   * @param accountId - Account ID to complete recovery for
+   * @returns Success message
+   */
+  async completeRecovery(accountId: string): Promise<CompleteRecoveryResponse> {
+    return this.request<CompleteRecoveryResponse>('/api/recovery/complete', {
+      method: 'POST',
+      body: JSON.stringify({ account_id: accountId }),
+    })
+  }
+
+  /**
+   * Cancel a pending recovery
+   *
+   * Only the current owner (with valid auth) can cancel a recovery.
+   * Use this if you regain access and want to stop an unauthorized recovery.
+   *
+   * @param token - JWT token (must be authenticated as owner)
+   * @returns Success message
+   */
+  async cancelRecovery(token: string): Promise<CancelRecoveryResponse> {
+    return this.request<CancelRecoveryResponse>('/api/recovery/cancel', {
+      method: 'POST',
+      token,
+    })
+  }
+
+  // ============================================================================
+  // Two-Factor Authentication (2FA)
+  // ============================================================================
+
+  /**
+   * Get 2FA status for the authenticated account
+   *
+   * @param token - JWT token
+   * @returns 2FA status including TOTP and PIN enablement
+   */
+  async get2FAStatus(token: string): Promise<TwoFactorStatusResponse> {
+    return this.request<TwoFactorStatusResponse>('/api/2fa/status', {
+      method: 'GET',
+      token,
+    })
+  }
+
+  /**
+   * Setup TOTP for the account
+   *
+   * Returns an otpauth:// URI for QR code generation and a base32 secret
+   * for manual entry. After setup, call enableTOTP with a valid code to
+   * complete the setup.
+   *
+   * @param token - JWT token
+   * @returns TOTP setup response with URI and secret
+   */
+  async setupTOTP(token: string): Promise<TotpSetupResponse> {
+    return this.request<TotpSetupResponse>('/api/2fa/totp/setup', {
+      method: 'POST',
+      token,
+    })
+  }
+
+  /**
+   * Verify and enable TOTP for the account
+   *
+   * Call this after setupTOTP with a valid code from the authenticator app.
+   *
+   * @param code - 6-digit TOTP code from authenticator app
+   * @param token - JWT token
+   * @returns Success response
+   */
+  async enableTOTP(code: string, token: string): Promise<TwoFactorResponse> {
+    return this.request<TwoFactorResponse>('/api/2fa/totp/enable', {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ code }),
+    })
+  }
+
+  /**
+   * Disable TOTP for the account
+   *
+   * Requires a valid TOTP code for confirmation.
+   *
+   * @param code - Current 6-digit TOTP code
+   * @param token - JWT token
+   * @returns Success response
+   */
+  async disableTOTP(code: string, token: string): Promise<TwoFactorResponse> {
+    return this.request<TwoFactorResponse>('/api/2fa/totp/disable', {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ code }),
+    })
+  }
+
+  /**
+   * Verify a TOTP code
+   *
+   * Use this to verify a TOTP code without performing any other operation.
+   *
+   * @param code - 6-digit TOTP code
+   * @param token - JWT token
+   * @returns Verification result
+   */
+  async verifyTOTP(code: string, token: string): Promise<TwoFactorVerifyResponse> {
+    return this.request<TwoFactorVerifyResponse>('/api/2fa/totp/verify', {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ code }),
+    })
+  }
+
+  /**
+   * Setup PIN for the account
+   *
+   * Sets a 4-digit or 6-digit PIN. If a PIN is already set, this replaces it.
+   *
+   * @param pin - 4 or 6 digit PIN
+   * @param token - JWT token
+   * @returns Success response with PIN length
+   */
+  async setupPIN(pin: string, token: string): Promise<PinSetupResponse> {
+    return this.request<PinSetupResponse>('/api/2fa/pin/setup', {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ pin }),
+    })
+  }
+
+  /**
+   * Disable PIN for the account
+   *
+   * Requires the current PIN for confirmation.
+   *
+   * @param pin - Current PIN
+   * @param token - JWT token
+   * @returns Success response
+   */
+  async disablePIN(pin: string, token: string): Promise<TwoFactorResponse> {
+    return this.request<TwoFactorResponse>('/api/2fa/pin/disable', {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ pin }),
+    })
+  }
+
+  /**
+   * Verify a PIN
+   *
+   * Use this to verify a PIN without performing any other operation.
+   *
+   * @param pin - PIN to verify
+   * @param token - JWT token
+   * @returns Verification result
+   */
+  async verifyPIN(pin: string, token: string): Promise<TwoFactorVerifyResponse> {
+    return this.request<TwoFactorVerifyResponse>('/api/2fa/pin/verify', {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ pin }),
+    })
+  }
+
+  /**
+   * Sign an EVM transaction with 2FA
+   *
+   * Use this method when 2FA is enabled. If 2FA is not enabled,
+   * you can use the regular signEvmTransaction method instead.
+   *
+   * @param request - Sign request including tx_hash, chain_id, and optional 2FA codes
+   * @param token - JWT token
+   * @returns Signature response with r, s, v components
+   */
+  async signEvmTransactionWith2FA(
+    request: SignEvmRequestWith2FA,
+    token: string
+  ): Promise<EvmSignatureResponse> {
+    return this.request<EvmSignatureResponse>('/api/sign/evm', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
   }
 }
 

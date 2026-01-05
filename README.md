@@ -1,17 +1,20 @@
 # kentucky-signer-viem
 
-A custom Viem account integration for the Kentucky Signer service, enabling EVM transaction signing using passkey (WebAuthn) or password authentication.
+A custom Viem account integration for the Kentucky Signer service, enabling EVM transaction signing using passkey (WebAuthn) or password authentication with optional two-factor authentication (TOTP/PIN).
 
 ## Features
 
-- Custom Viem account backed by Kentucky Signer
-- Passkey (WebAuthn) authentication for browser environments
-- Password authentication for browser and Node.js environments
-- JWT token authentication for Node.js/server environments
-- Account creation with passkey or password
-- React hooks and context for easy integration
-- TypeScript support with full type definitions
-- Session management with automatic refresh
+- **Custom Viem Account** - Full Viem compatibility for signing transactions, messages, and typed data
+- **Multiple Authentication Methods**
+  - Passkey (WebAuthn) for browser environments
+  - Password authentication for browser and Node.js
+  - JWT token authentication for server environments
+- **Secure Mode** - Ephemeral key signing with client-side key generation
+- **Two-Factor Authentication** - TOTP (authenticator app) and PIN support
+- **Guardian Recovery** - Social recovery with trusted guardians
+- **React Integration** - Hooks and context for easy React app integration
+- **TypeScript Support** - Full type definitions included
+- **Session Management** - Automatic refresh and persistence options
 
 ## Installation
 
@@ -63,67 +66,36 @@ const hash = await walletClient.sendTransaction({
   to: '0x...',
   value: parseEther('0.1'),
 })
-console.log('Transaction hash:', hash)
 ```
 
-### Password Authentication (Browser or Node.js)
+### Password Authentication
 
 ```typescript
-import { createWalletClient, http, parseEther } from 'viem'
-import { mainnet } from 'viem/chains'
 import {
-  createKentuckySignerAccount,
   authenticateWithPassword,
   createAccountWithPassword,
 } from 'kentucky-signer-viem'
 
-// Option 1: Create a new account with password
+// Create a new account
 const newAccount = await createAccountWithPassword({
   baseUrl: 'https://signer.example.com',
   password: 'your-secure-password',
   confirmation: 'your-secure-password',
 })
-console.log('Account ID:', newAccount.account_id)
-console.log('EVM Address:', newAccount.addresses.evm)
 
-// Option 2: Authenticate with existing account
+// Or authenticate with existing account
 const session = await authenticateWithPassword({
   baseUrl: 'https://signer.example.com',
-  accountId: newAccount.account_id,
+  accountId: 'existing_account_id',
   password: 'your-secure-password',
-})
-
-// Create Kentucky Signer account
-const account = createKentuckySignerAccount({
-  config: {
-    baseUrl: 'https://signer.example.com',
-    accountId: session.accountId,
-  },
-  session,
-  defaultChainId: 1,
-})
-
-// Use with Viem
-const walletClient = createWalletClient({
-  account,
-  chain: mainnet,
-  transport: http('https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY'),
-})
-
-const hash = await walletClient.sendTransaction({
-  to: '0x...',
-  value: parseEther('0.1'),
 })
 ```
 
 ### Node.js (with JWT Token)
 
 ```typescript
-import { createWalletClient, http, parseEther } from 'viem'
-import { mainnet } from 'viem/chains'
 import { createServerAccount } from 'kentucky-signer-viem'
 
-// Create account with existing JWT token
 const account = createServerAccount(
   'https://signer.example.com',
   'account_id_hex',
@@ -131,18 +103,6 @@ const account = createServerAccount(
   '0xYourEvmAddress',
   1 // chainId
 )
-
-// Use with Viem
-const walletClient = createWalletClient({
-  account,
-  chain: mainnet,
-  transport: http('https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY'),
-})
-
-const hash = await walletClient.sendTransaction({
-  to: '0x...',
-  value: parseEther('0.1'),
-})
 ```
 
 ## React Integration
@@ -158,6 +118,7 @@ function App() {
       baseUrl="https://signer.example.com"
       defaultChainId={1}
       persistSession={true}
+      useEphemeralKeys={true} // Enable secure mode
     >
       <YourApp />
     </KentuckySignerProvider>
@@ -168,29 +129,24 @@ function App() {
 ### Authentication Hook
 
 ```tsx
-import { useKentuckySigner, usePasskeyAuth } from 'kentucky-signer-viem/react'
+import { useKentuckySigner } from 'kentucky-signer-viem/react'
 
 function LoginButton() {
-  const { isAuthenticated, account } = useKentuckySigner()
-  const { login, isLoading, error } = usePasskeyAuth()
-  const [accountId, setAccountId] = useState('')
+  const { isAuthenticated, account, authenticate, logout } = useKentuckySigner()
 
   if (isAuthenticated && account) {
-    return <div>Connected: {account.address}</div>
+    return (
+      <div>
+        <span>Connected: {account.address}</span>
+        <button onClick={logout}>Logout</button>
+      </div>
+    )
   }
 
   return (
-    <div>
-      <input
-        placeholder="Account ID"
-        value={accountId}
-        onChange={(e) => setAccountId(e.target.value)}
-      />
-      <button onClick={() => login(accountId)} disabled={isLoading}>
-        {isLoading ? 'Authenticating...' : 'Login with Passkey'}
-      </button>
-      {error && <div className="error">{error.message}</div>}
-    </div>
+    <button onClick={() => authenticate('account_id')}>
+      Login with Passkey
+    </button>
   )
 }
 ```
@@ -200,159 +156,166 @@ function LoginButton() {
 ```tsx
 import { useWalletClient, useIsReady } from 'kentucky-signer-viem/react'
 import { mainnet } from 'viem/chains'
-import { parseEther } from 'viem'
 
 function SendTransaction() {
   const isReady = useIsReady()
-  const walletClient = useWalletClient({
-    chain: mainnet,
-    rpcUrl: 'https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY',
-  })
+  const walletClient = useWalletClient({ chain: mainnet })
 
   async function send() {
     if (!walletClient) return
-
     const hash = await walletClient.sendTransaction({
       to: '0x...',
       value: parseEther('0.1'),
     })
-    console.log('Transaction hash:', hash)
   }
 
-  return (
-    <button onClick={send} disabled={!isReady}>
-      Send 0.1 ETH
-    </button>
-  )
+  return <button onClick={send} disabled={!isReady}>Send</button>
 }
 ```
 
-### Sign Message Hook
+## Secure Mode (Ephemeral Keys)
+
+Secure mode adds an extra layer of security by requiring client-side ephemeral key signatures for all operations:
+
+```typescript
+import { SecureKentuckySignerClient, EphemeralKeyManager } from 'kentucky-signer-viem'
+
+// Create ephemeral key manager
+const keyManager = new EphemeralKeyManager()
+
+// Create secure client
+const secureClient = new SecureKentuckySignerClient({
+  baseUrl: 'https://signer.example.com',
+  ephemeralKeyManager: keyManager,
+})
+
+// Authenticate with ephemeral key binding
+const session = await authenticateWithPasskey({
+  baseUrl: 'https://signer.example.com',
+  accountId: 'account_id',
+  ephemeralPublicKey: await keyManager.getPublicKey(),
+})
+
+// Create account with secure client
+const account = createKentuckySignerAccount({
+  config: { baseUrl, accountId },
+  session,
+  secureClient, // Uses ephemeral key signing
+})
+```
+
+## Two-Factor Authentication
+
+### Setup TOTP (Authenticator App)
+
+```typescript
+import { KentuckySignerClient } from 'kentucky-signer-viem'
+
+const client = new KentuckySignerClient({ baseUrl })
+
+// Start TOTP setup - returns QR code URI
+const setup = await client.setupTOTP(token)
+console.log('Scan this QR code:', setup.uri)
+console.log('Or enter manually:', setup.secret)
+
+// Enable TOTP with verification code
+await client.enableTOTP('123456', token)
+
+// Check 2FA status
+const status = await client.get2FAStatus(token)
+// { totp_enabled: true, pin_enabled: false, pin_length: 0 }
+```
+
+### Setup PIN
+
+```typescript
+// Setup 4 or 6 digit PIN
+await client.setupPIN('123456', token)
+
+// Disable PIN (requires current PIN)
+await client.disablePIN('123456', token)
+```
+
+### Signing with 2FA
+
+When 2FA is enabled, signing operations will automatically prompt for codes:
 
 ```tsx
-import { useSignMessage } from 'kentucky-signer-viem/react'
+import { useKentuckySigner } from 'kentucky-signer-viem/react'
 
-function SignMessageDemo() {
-  const { signMessage, isLoading, isAvailable } = useSignMessage()
-  const [signature, setSignature] = useState('')
+function App() {
+  const { twoFactorPrompt, submit2FA, cancel2FA } = useKentuckySigner()
 
-  async function sign() {
-    const sig = await signMessage('Hello, Kentucky Signer!')
-    setSignature(sig)
+  // The 2FA prompt appears automatically when signing requires it
+  if (twoFactorPrompt.isVisible) {
+    return (
+      <TwoFactorModal
+        totpRequired={twoFactorPrompt.totpRequired}
+        pinRequired={twoFactorPrompt.pinRequired}
+        pinLength={twoFactorPrompt.pinLength}
+        onSubmit={(codes) => submit2FA(codes)}
+        onCancel={() => cancel2FA()}
+      />
+    )
   }
 
-  return (
-    <div>
-      <button onClick={sign} disabled={isLoading || !isAvailable}>
-        {isLoading ? 'Signing...' : 'Sign Message'}
-      </button>
-      {signature && <pre>{signature}</pre>}
-    </div>
-  )
+  return <YourApp />
 }
+```
+
+## Guardian Recovery
+
+Set up trusted guardians for account recovery:
+
+```typescript
+const client = new KentuckySignerClient({ baseUrl })
+
+// Add a guardian
+await client.addGuardian(accountId, {
+  guardian_account_id: 'guardian_hex_id',
+  label: 'My Friend',
+}, token)
+
+// List guardians
+const { guardians } = await client.getGuardians(accountId, token)
+
+// Initiate recovery (when locked out)
+const recovery = await client.initiateRecovery({
+  account_id: accountId,
+  new_password: 'new-secure-password',
+})
+
+// Guardian approves recovery
+await client.verifyGuardianRecovery({
+  recovery_id: recovery.recovery_id,
+  guardian_account_id: guardianId,
+  signature: guardianSignature,
+}, guardianToken)
+
+// Complete recovery after threshold met
+await client.completeRecovery({
+  recovery_id: recovery.recovery_id,
+}, token)
 ```
 
 ## API Reference
 
 ### Core Functions
 
-#### `createKentuckySignerAccount(options)`
-
-Creates a custom Viem account backed by Kentucky Signer.
-
-```typescript
-const account = createKentuckySignerAccount({
-  config: {
-    baseUrl: string,      // Kentucky Signer API URL
-    accountId: string,    // 64-char hex account ID
-  },
-  session: AuthSession,   // Authenticated session
-  defaultChainId?: number, // Default chain ID (default: 1)
-  onSessionExpired?: () => Promise<AuthSession>, // Session refresh callback
-})
-```
-
-#### `authenticateWithPasskey(options)`
-
-Authenticates using WebAuthn passkey (browser only).
-
-```typescript
-const session = await authenticateWithPasskey({
-  baseUrl: string,           // Kentucky Signer API URL
-  accountId: string,         // Account ID to authenticate
-  rpId?: string,             // WebAuthn Relying Party ID
-  allowCredentials?: string[], // Allowed credential IDs
-})
-```
-
-#### `authenticateWithPassword(options)`
-
-Authenticates using password (works in browser and Node.js).
-
-```typescript
-const session = await authenticateWithPassword({
-  baseUrl: string,     // Kentucky Signer API URL
-  accountId: string,   // Account ID to authenticate
-  password: string,    // Account password
-})
-```
-
-#### `createAccountWithPassword(options)`
-
-Creates a new account with password authentication.
-
-```typescript
-const account = await createAccountWithPassword({
-  baseUrl: string,       // Kentucky Signer API URL
-  password: string,      // Password (8-128 characters)
-  confirmation: string,  // Must match password
-})
-// Returns: { account_id, addresses: { evm, bitcoin, solana } }
-```
-
-#### `authenticateWithToken(baseUrl, accountId, token, expiresAt?)`
-
-Creates a session from an existing JWT token (Node.js compatible).
-
-```typescript
-const session = await authenticateWithToken(
-  'https://signer.example.com',
-  'account_id',
-  'jwt_token',
-  Date.now() + 3600000 // Optional expiration
-)
-```
-
-### Client Class
-
-#### `KentuckySignerClient`
-
-Low-level API client for Kentucky Signer.
-
-```typescript
-const client = new KentuckySignerClient({ baseUrl: 'https://signer.example.com' })
-
-// Get challenge for authentication
-const challenge = await client.getChallenge(accountId)
-
-// Authenticate with passkey credential
-const auth = await client.authenticatePasskey(accountId, credential)
-
-// Sign EVM transaction
-const signature = await client.signEvmTransaction(
-  { tx_hash: '0x...', chain_id: 1 },
-  jwtToken
-)
-
-// Get account info
-const info = await client.getAccountInfo(accountId, jwtToken)
-```
+| Function | Description |
+|----------|-------------|
+| `createKentuckySignerAccount(options)` | Create a Viem-compatible account |
+| `createServerAccount(...)` | Create account with JWT token (Node.js) |
+| `authenticateWithPasskey(options)` | Authenticate using WebAuthn |
+| `authenticateWithPassword(options)` | Authenticate using password |
+| `createAccountWithPassword(options)` | Create new account with password |
+| `authenticateWithToken(...)` | Create session from JWT token |
 
 ### React Hooks
 
 | Hook | Description |
 |------|-------------|
-| `useKentuckySigner()` | Access auth state and actions |
+| `useKentuckySigner()` | Access auth state, actions, and 2FA |
 | `useKentuckySignerAccount()` | Get the current account |
 | `useWalletClient(options)` | Create a Viem WalletClient |
 | `usePasskeyAuth()` | Authentication flow with loading state |
@@ -361,42 +324,39 @@ const info = await client.getAccountInfo(accountId, jwtToken)
 | `useIsReady()` | Check if signer is ready |
 | `useAddress()` | Get connected address |
 
-### Types
+### Client Methods
 
-```typescript
-interface AuthSession {
-  token: string        // JWT access token
-  accountId: string    // Account ID
-  evmAddress: Address  // EVM address
-  btcAddress?: string  // Bitcoin address
-  solAddress?: string  // Solana address
-  expiresAt: number    // Expiration timestamp (ms)
-}
+#### Authentication
+- `getChallenge(accountId)` - Get WebAuthn challenge
+- `authenticatePasskey(accountId, credential)` - Authenticate with passkey
+- `authenticatePassword(accountId, password)` - Authenticate with password
+- `logout(token)` - Invalidate session
 
-interface KentuckySignerConfig {
-  baseUrl: string      // API URL
-  accountId: string    // Account ID
-}
-```
+#### Signing
+- `signEvmTransaction(request, token)` - Sign EVM transaction hash
+- `signEvmTransactionWith2FA(request, token)` - Sign with 2FA codes
 
-## Session Management
+#### Account Management
+- `getAccountInfo(accountId, token)` - Get account info
+- `addPassword(accountId, request, token)` - Add password auth
+- `addPasskey(accountId, request, token)` - Add passkey
+- `removePasskey(accountId, credentialId, token)` - Remove passkey
 
-Sessions are automatically managed:
+#### Two-Factor Authentication
+- `get2FAStatus(token)` - Get 2FA status
+- `setupTOTP(token)` - Start TOTP setup
+- `enableTOTP(code, token)` - Enable TOTP
+- `disableTOTP(code, token)` - Disable TOTP
+- `setupPIN(pin, token)` - Setup PIN
+- `disablePIN(pin, token)` - Disable PIN
 
-- **Browser**: Sessions can be persisted to localStorage
-- **Auto-refresh**: Sessions are refreshed before expiration
-- **Expiration handling**: Provide `onSessionExpired` callback for custom handling
-
-```typescript
-const account = createKentuckySignerAccount({
-  config: { baseUrl, accountId },
-  session,
-  onSessionExpired: async () => {
-    // Re-authenticate or refresh token
-    return await authenticateWithPasskey({ baseUrl, accountId })
-  },
-})
-```
+#### Guardian Recovery
+- `addGuardian(accountId, request, token)` - Add guardian
+- `removeGuardian(accountId, guardianId, token)` - Remove guardian
+- `getGuardians(accountId, token)` - List guardians
+- `initiateRecovery(request)` - Start recovery
+- `verifyGuardianRecovery(request, token)` - Guardian approval
+- `completeRecovery(request, token)` - Complete recovery
 
 ## Error Handling
 
@@ -407,21 +367,38 @@ try {
   await authenticate(accountId)
 } catch (error) {
   if (error instanceof KentuckySignerError) {
-    console.error('Code:', error.code)
-    console.error('Message:', error.message)
-    console.error('Details:', error.details)
+    switch (error.code) {
+      case 'WEBAUTHN_NOT_AVAILABLE':
+        // WebAuthn not supported
+        break
+      case 'USER_CANCELLED':
+        // User cancelled authentication
+        break
+      case 'SESSION_EXPIRED':
+        // JWT token expired
+        break
+      case '2FA_REQUIRED':
+        // 2FA verification needed
+        break
+      case '2FA_CANCELLED':
+        // User cancelled 2FA input
+        break
+      // ... handle other codes
+    }
   }
 }
 ```
 
-Common error codes:
-- `WEBAUTHN_NOT_AVAILABLE` - WebAuthn not supported
-- `USER_CANCELLED` - User cancelled authentication
-- `SESSION_EXPIRED` - JWT token expired
-- `UNAUTHORIZED` - Invalid or missing token
-- `NOT_FOUND` - Account not found
-- `PASSWORD_MISMATCH` - Password and confirmation don't match
-- `INVALID_PASSWORD` - Password doesn't meet requirements (8-128 chars)
+## Documentation
+
+For detailed documentation, see the [docs](./docs) folder:
+
+- [Authentication](./docs/authentication.md) - Passkey, password, and token auth
+- [Secure Mode](./docs/secure-mode.md) - Ephemeral key signing
+- [Two-Factor Authentication](./docs/two-factor-auth.md) - TOTP and PIN setup
+- [Guardian Recovery](./docs/guardian-recovery.md) - Social recovery setup
+- [React Integration](./docs/react-integration.md) - Hooks and context usage
+- [API Reference](./docs/api-reference.md) - Complete API documentation
 
 ## License
 

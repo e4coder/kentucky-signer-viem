@@ -23,6 +23,26 @@ import { SecureKentuckySignerClient } from './secure-client'
 import type { EphemeralKeyManager } from './ephemeral'
 
 /**
+ * 2FA codes for signing operations
+ */
+export interface TwoFactorCodes {
+  /** TOTP code from authenticator app */
+  totpCode?: string
+  /** PIN code */
+  pin?: string
+}
+
+/**
+ * Callback to request 2FA codes from the user
+ * Returns null/undefined if user cancels
+ */
+export type TwoFactorCallback = (requirements: {
+  totpRequired: boolean
+  pinRequired: boolean
+  pinLength: number
+}) => Promise<TwoFactorCodes | null | undefined>
+
+/**
  * Options for creating a Kentucky Signer account
  */
 export interface KentuckySignerAccountOptions {
@@ -36,6 +56,8 @@ export interface KentuckySignerAccountOptions {
   onSessionExpired?: () => Promise<AuthSession>
   /** Optional secure client for ephemeral key signing */
   secureClient?: SecureKentuckySignerClient
+  /** Callback to request 2FA codes when required */
+  on2FARequired?: TwoFactorCallback
 }
 
 /**
@@ -85,7 +107,7 @@ export interface KentuckySignerAccount extends LocalAccount<'kentuckySigner'> {
 export function createKentuckySignerAccount(
   options: KentuckySignerAccountOptions
 ): KentuckySignerAccount {
-  const { config, defaultChainId = 1, onSessionExpired, secureClient } = options
+  const { config, defaultChainId = 1, onSessionExpired, secureClient, on2FARequired } = options
   let session = options.session
 
   // Use secure client if provided, otherwise use standard client
@@ -112,29 +134,89 @@ export function createKentuckySignerAccount(
 
   /**
    * Sign a hash using Kentucky Signer and return full signature
+   * Handles 2FA by detecting the error and calling the callback
    */
   async function signHash(hash: Hex, chainId: number): Promise<Hex> {
     const token = await getToken()
-    const response = await client.signEvmTransaction(
-      { tx_hash: hash, chain_id: chainId },
-      token
-    )
-    return response.signature.full
+
+    // First attempt without 2FA codes
+    try {
+      const response = await client.signEvmTransaction(
+        { tx_hash: hash, chain_id: chainId },
+        token
+      )
+      return response.signature.full
+    } catch (err) {
+      // Check if 2FA is required
+      if (err instanceof KentuckySignerError && err.code === '2FA_REQUIRED' && on2FARequired) {
+        // Parse requirements from error details
+        const totpRequired = err.message.includes('TOTP') || (err.details?.includes('totp_code') ?? false)
+        const pinRequired = err.message.includes('PIN') || (err.details?.includes('pin') ?? false)
+        // Default to 6-digit PIN if required
+        const pinLength = err.details?.match(/(\d)-digit/)?.[1] ? parseInt(err.details.match(/(\d)-digit/)![1]) : 6
+
+        // Request 2FA codes from user
+        const codes = await on2FARequired({ totpRequired, pinRequired, pinLength })
+        if (!codes) {
+          throw new KentuckySignerError('2FA verification cancelled', '2FA_CANCELLED', 'User cancelled 2FA input')
+        }
+
+        // Retry with 2FA codes
+        const response = await client.signEvmTransactionWith2FA(
+          { tx_hash: hash, chain_id: chainId, totp_code: codes.totpCode, pin: codes.pin },
+          token
+        )
+        return response.signature.full
+      }
+      throw err
+    }
   }
 
   /**
    * Sign a hash using Kentucky Signer and return signature components
+   * Handles 2FA by detecting the error and calling the callback
    */
   async function signHashWithComponents(hash: Hex, chainId: number): Promise<{ r: Hex; s: Hex; v: number }> {
     const token = await getToken()
-    const response = await client.signEvmTransaction(
-      { tx_hash: hash, chain_id: chainId },
-      token
-    )
-    return {
-      r: response.signature.r,
-      s: response.signature.s,
-      v: response.signature.v,
+
+    // First attempt without 2FA codes
+    try {
+      const response = await client.signEvmTransaction(
+        { tx_hash: hash, chain_id: chainId },
+        token
+      )
+      return {
+        r: response.signature.r,
+        s: response.signature.s,
+        v: response.signature.v,
+      }
+    } catch (err) {
+      // Check if 2FA is required
+      if (err instanceof KentuckySignerError && err.code === '2FA_REQUIRED' && on2FARequired) {
+        // Parse requirements from error details
+        const totpRequired = err.message.includes('TOTP') || (err.details?.includes('totp_code') ?? false)
+        const pinRequired = err.message.includes('PIN') || (err.details?.includes('pin') ?? false)
+        // Default to 6-digit PIN if required
+        const pinLength = err.details?.match(/(\d)-digit/)?.[1] ? parseInt(err.details.match(/(\d)-digit/)![1]) : 6
+
+        // Request 2FA codes from user
+        const codes = await on2FARequired({ totpRequired, pinRequired, pinLength })
+        if (!codes) {
+          throw new KentuckySignerError('2FA verification cancelled', '2FA_CANCELLED', 'User cancelled 2FA input')
+        }
+
+        // Retry with 2FA codes
+        const response = await client.signEvmTransactionWith2FA(
+          { tx_hash: hash, chain_id: chainId, totp_code: codes.totpCode, pin: codes.pin },
+          token
+        )
+        return {
+          r: response.signature.r,
+          s: response.signature.s,
+          v: response.signature.v,
+        }
+      }
+      throw err
     }
   }
 

@@ -45,6 +45,10 @@ export function useKentuckySigner() {
     persistEphemeralKeys: context.persistEphemeralKeys,
     setPersistEphemeralKeys: context.setPersistEphemeralKeys,
     getEphemeralPublicKey: context.getEphemeralPublicKey,
+    // 2FA support
+    twoFactorPrompt: context.twoFactorPrompt,
+    submit2FA: context.submit2FA,
+    cancel2FA: context.cancel2FA,
   }
 }
 
