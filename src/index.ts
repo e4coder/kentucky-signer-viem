@@ -15,7 +15,14 @@ export {
   type KentuckySignerAccountOptions,
   type TwoFactorCodes,
   type TwoFactorCallback,
+  // EIP-7702 types
+  type SignAuthorizationParameters,
+  type SignedAuthorization,
 } from './account'
+
+// EIP-7702 Constants
+/** Alchemy's SemiModularAccount7702 implementation address (same across all EVM chains) */
+export const ALCHEMY_SEMI_MODULAR_ACCOUNT_7702 = '0x69007702764179f14F51cdce752f4f775d74E139' as const
 
 // Client
 export {

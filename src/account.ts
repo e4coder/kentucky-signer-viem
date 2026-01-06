@@ -8,11 +8,13 @@ import {
   type TransactionSerializable,
   type TypedData,
   type TypedDataDefinition,
+  type SignedAuthorizationList,
   hashMessage,
   hashTypedData,
   keccak256,
   serializeTransaction,
   toHex,
+  toRlp,
   concat,
   numberToHex,
 } from 'viem'
@@ -43,6 +45,66 @@ export type TwoFactorCallback = (requirements: {
 }) => Promise<TwoFactorCodes | null | undefined>
 
 /**
+ * EIP-7702 Magic byte used in authorization hash
+ * @see https://eips.ethereum.org/EIPS/eip-7702
+ */
+const EIP7702_MAGIC = '0x05' as const
+
+/**
+ * Parameters for signing an EIP-7702 authorization
+ */
+export interface SignAuthorizationParameters {
+  /** The contract address to delegate to */
+  contractAddress: Address
+  /** Chain ID (0 for all chains, defaults to client chain) */
+  chainId?: number
+  /** Nonce for the authorization (defaults to account's current nonce) */
+  nonce?: bigint
+  /**
+   * Whether the authorization will be executed by the signer themselves.
+   * If 'self', the nonce in the authorization will be incremented by 1
+   * over the transaction nonce.
+   */
+  executor?: 'self'
+}
+
+/**
+ * Signed EIP-7702 authorization
+ * Compatible with viem's SignedAuthorizationList
+ */
+export interface SignedAuthorization {
+  /** Chain ID (0 for all chains) */
+  chainId: number
+  /** Contract address to delegate to */
+  contractAddress: Address
+  /** Nonce for the authorization */
+  nonce: bigint
+  /** Recovery identifier (0 or 1) */
+  yParity: number
+  /** Signature r component */
+  r: Hex
+  /** Signature s component */
+  s: Hex
+}
+
+/**
+ * Compute the hash for an EIP-7702 authorization
+ * Hash = keccak256(0x05 || rlp([chain_id, address, nonce]))
+ */
+function hashAuthorization(params: {
+  contractAddress: Address
+  chainId: number
+  nonce: bigint
+}): Hex {
+  const rlpEncoded = toRlp([
+    params.chainId === 0 ? '0x' : numberToHex(params.chainId),
+    params.contractAddress,
+    params.nonce === 0n ? '0x' : numberToHex(params.nonce),
+  ])
+  return keccak256(concat([EIP7702_MAGIC, rlpEncoded]))
+}
+
+/**
  * Options for creating a Kentucky Signer account
  */
 export interface KentuckySignerAccountOptions {
@@ -63,13 +125,44 @@ export interface KentuckySignerAccountOptions {
 /**
  * Extended account type with Kentucky Signer specific properties
  */
-export interface KentuckySignerAccount extends LocalAccount<'kentuckySigner'> {
+export interface KentuckySignerAccount extends Omit<LocalAccount<'kentuckySigner'>, 'signAuthorization'> {
   /** Account ID */
   accountId: string
   /** Current session */
   session: AuthSession
   /** Update the session (e.g., after refresh) */
   updateSession: (session: AuthSession) => void
+  /**
+   * Sign an EIP-7702 authorization to delegate code to this account
+   *
+   * @param params - Authorization parameters
+   * @param nonce - Current account nonce (required if params.nonce not specified)
+   * @returns Signed authorization compatible with viem's authorizationList
+   *
+   * @example
+   * ```typescript
+   * // Get current nonce
+   * const nonce = await publicClient.getTransactionCount({ address: account.address })
+   *
+   * // Sign authorization
+   * const authorization = await account.sign7702Authorization({
+   *   contractAddress: '0x69007702764179f14F51cdce752f4f775d74E139', // Alchemy MA v2
+   *   chainId: 1,
+   *   executor: 'self', // Account will execute the tx
+   * }, nonce)
+   *
+   * // Send EIP-7702 transaction
+   * const hash = await walletClient.sendTransaction({
+   *   authorizationList: [authorization],
+   *   to: account.address,
+   *   data: initializeCalldata,
+   * })
+   * ```
+   */
+  sign7702Authorization: (
+    params: SignAuthorizationParameters,
+    nonce: bigint
+  ) => Promise<SignedAuthorization>
 }
 
 /**
@@ -303,6 +396,48 @@ export function createKentuckySignerAccount(
     // Update address if changed (shouldn't happen but handle it)
     if (newSession.evmAddress !== account.address) {
       ;(account as any).address = newSession.evmAddress
+    }
+  }
+
+  /**
+   * Sign an EIP-7702 authorization
+   *
+   * This allows the EOA to delegate its code to a smart contract,
+   * enabling smart account features like batching and gas sponsorship.
+   */
+  account.sign7702Authorization = async (
+    params: SignAuthorizationParameters,
+    currentNonce: bigint
+  ): Promise<SignedAuthorization> => {
+    // Determine the nonce for the authorization
+    // If executor is 'self', increment by 1 because the tx will use currentNonce
+    const authNonce = params.executor === 'self'
+      ? currentNonce + 1n
+      : (params.nonce ?? currentNonce)
+
+    // Use provided chainId or default
+    const chainId = params.chainId ?? defaultChainId
+
+    // Compute the authorization hash
+    const authHash = hashAuthorization({
+      contractAddress: params.contractAddress,
+      chainId,
+      nonce: authNonce,
+    })
+
+    // Sign the hash using Kentucky Signer
+    const { r, s, v } = await signHashWithComponents(authHash, chainId)
+
+    // Convert v to yParity (0 or 1)
+    const yParity = v >= 27 ? v - 27 : v
+
+    return {
+      chainId,
+      contractAddress: params.contractAddress,
+      nonce: authNonce,
+      yParity,
+      r,
+      s,
     }
   }
 
