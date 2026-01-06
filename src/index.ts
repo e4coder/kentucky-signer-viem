@@ -134,3 +134,28 @@ export {
   formatError,
   withRetry,
 } from './utils'
+
+// Intent signing for relayer integration
+export {
+  createExecutionIntent,
+  signIntent,
+  signBatchIntents,
+  hashIntent,
+  hashBatchIntents,
+  type ExecutionIntent,
+  type SignedIntent,
+  type CreateIntentParams,
+} from './intent'
+
+// Relayer client
+export {
+  RelayerClient,
+  createRelayerClient,
+  type PaymentMode,
+  type TokenOption,
+  type EstimateResponse,
+  type RelayResponse,
+  type TransactionStatus,
+  type StatusResponse,
+  type RelayerClientOptions,
+} from './relayer-client'

@@ -17,6 +17,7 @@ import {
   toRlp,
   concat,
   numberToHex,
+  recoverAddress,
 } from 'viem'
 import { toAccount } from 'viem/accounts'
 import type { AuthSession, KentuckySignerConfig } from './types'
@@ -226,6 +227,13 @@ export function createKentuckySignerAccount(
   }
 
   /**
+   * Ensure a value is properly formatted as a Hex string with 0x prefix
+   */
+  function ensureHexPrefix(value: string): Hex {
+    return (value.startsWith('0x') ? value : `0x${value}`) as Hex
+  }
+
+  /**
    * Sign a hash using Kentucky Signer and return full signature
    * Handles 2FA by detecting the error and calling the callback
    */
@@ -238,7 +246,8 @@ export function createKentuckySignerAccount(
         { tx_hash: hash, chain_id: chainId },
         token
       )
-      return response.signature.full
+      // Ensure the signature has 0x prefix
+      return ensureHexPrefix(response.signature.full)
     } catch (err) {
       // Check if 2FA is required
       if (err instanceof KentuckySignerError && err.code === '2FA_REQUIRED' && on2FARequired) {
@@ -259,7 +268,8 @@ export function createKentuckySignerAccount(
           { tx_hash: hash, chain_id: chainId, totp_code: codes.totpCode, pin: codes.pin },
           token
         )
-        return response.signature.full
+        // Ensure the signature has 0x prefix
+        return ensureHexPrefix(response.signature.full)
       }
       throw err
     }
@@ -279,8 +289,8 @@ export function createKentuckySignerAccount(
         token
       )
       return {
-        r: response.signature.r,
-        s: response.signature.s,
+        r: ensureHexPrefix(response.signature.r),
+        s: ensureHexPrefix(response.signature.s),
         v: response.signature.v,
       }
     } catch (err) {
@@ -304,8 +314,8 @@ export function createKentuckySignerAccount(
           token
         )
         return {
-          r: response.signature.r,
-          s: response.signature.s,
+          r: ensureHexPrefix(response.signature.r),
+          s: ensureHexPrefix(response.signature.s),
           v: response.signature.v,
         }
       }
@@ -426,10 +436,58 @@ export function createKentuckySignerAccount(
     })
 
     // Sign the hash using Kentucky Signer
+    // r and s already have 0x prefix from signHashWithComponents
     const { r, s, v } = await signHashWithComponents(authHash, chainId)
 
     // Convert v to yParity (0 or 1)
-    const yParity = v >= 27 ? v - 27 : v
+    // v can be 0, 1, 27, or 28 depending on the signing implementation
+    let yParity: number
+    if (v === 0 || v === 1) {
+      yParity = v
+    } else if (v >= 27 && v <= 28) {
+      yParity = v - 27
+    } else {
+      // For legacy/EIP-155 signatures: v = chainId * 2 + 35 + recovery
+      // recovery = (v - 35 - chainId * 2) % 2
+      yParity = (v - 35) % 2
+      if (yParity < 0) yParity = 0
+      if (yParity > 1) yParity = yParity % 2
+    }
+
+    // Verify the signature recovers to the correct address
+    // Kentucky Signer sometimes returns inconsistent v values, so we need to verify
+    // and try the other yParity if the first one doesn't recover correctly
+    const expectedAddress = session.evmAddress.toLowerCase()
+
+    // Try recovering with the calculated yParity
+    try {
+      const recoveredAddress = await recoverAddress({
+        hash: authHash,
+        signature: { r, s, v: BigInt(yParity + 27) }
+      })
+
+      if (recoveredAddress.toLowerCase() !== expectedAddress) {
+        // Try the other yParity
+        const altYParity = yParity === 0 ? 1 : 0
+        const altRecoveredAddress = await recoverAddress({
+          hash: authHash,
+          signature: { r, s, v: BigInt(altYParity + 27) }
+        })
+
+        if (altRecoveredAddress.toLowerCase() === expectedAddress) {
+          yParity = altYParity
+        } else {
+          throw new KentuckySignerError(
+            'Authorization signature does not recover to expected address',
+            'SIGNATURE_RECOVERY_FAILED',
+            `Expected ${expectedAddress}, got ${recoveredAddress} and ${altRecoveredAddress}`
+          )
+        }
+      }
+    } catch (err) {
+      if (err instanceof KentuckySignerError) throw err
+      // If recovery fails, proceed with calculated yParity (best effort)
+    }
 
     return {
       chainId,
