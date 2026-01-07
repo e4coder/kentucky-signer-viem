@@ -17,7 +17,6 @@ import {
   toRlp,
   concat,
   numberToHex,
-  recoverAddress,
 } from 'viem'
 import { toAccount } from 'viem/accounts'
 import type { AuthSession, KentuckySignerConfig } from './types'
@@ -236,14 +235,16 @@ export function createKentuckySignerAccount(
   /**
    * Sign a hash using Kentucky Signer and return full signature
    * Handles 2FA by detecting the error and calling the callback
+   *
+   * Note: v in returned signature is always 27 or 28 (standard format)
    */
-  async function signHash(hash: Hex, chainId: number): Promise<Hex> {
+  async function signHash(hash: Hex): Promise<Hex> {
     const token = await getToken()
 
     // First attempt without 2FA codes
     try {
       const response = await client.signEvmTransaction(
-        { tx_hash: hash, chain_id: chainId },
+        { tx_hash: hash },
         token
       )
       // Ensure the signature has 0x prefix
@@ -265,7 +266,7 @@ export function createKentuckySignerAccount(
 
         // Retry with 2FA codes
         const response = await client.signEvmTransactionWith2FA(
-          { tx_hash: hash, chain_id: chainId, totp_code: codes.totpCode, pin: codes.pin },
+          { tx_hash: hash, totp_code: codes.totpCode, pin: codes.pin },
           token
         )
         // Ensure the signature has 0x prefix
@@ -278,14 +279,16 @@ export function createKentuckySignerAccount(
   /**
    * Sign a hash using Kentucky Signer and return signature components
    * Handles 2FA by detecting the error and calling the callback
+   *
+   * Note: v is always 27 or 28 (standard format, recovery_id + 27)
    */
-  async function signHashWithComponents(hash: Hex, chainId: number): Promise<{ r: Hex; s: Hex; v: number }> {
+  async function signHashWithComponents(hash: Hex): Promise<{ r: Hex; s: Hex; v: number }> {
     const token = await getToken()
 
     // First attempt without 2FA codes
     try {
       const response = await client.signEvmTransaction(
-        { tx_hash: hash, chain_id: chainId },
+        { tx_hash: hash },
         token
       )
       return {
@@ -310,7 +313,7 @@ export function createKentuckySignerAccount(
 
         // Retry with 2FA codes
         const response = await client.signEvmTransactionWith2FA(
-          { tx_hash: hash, chain_id: chainId, totp_code: codes.totpCode, pin: codes.pin },
+          { tx_hash: hash, totp_code: codes.totpCode, pin: codes.pin },
           token
         )
         return {
@@ -333,7 +336,7 @@ export function createKentuckySignerAccount(
      */
     async signMessage({ message }: { message: SignableMessage }): Promise<Hex> {
       const messageHash = hashMessage(message)
-      return signHash(messageHash, defaultChainId)
+      return signHash(messageHash)
     },
 
     /**
@@ -341,6 +344,9 @@ export function createKentuckySignerAccount(
      *
      * Serializes the transaction, hashes it, signs via Kentucky Signer,
      * and returns the signed serialized transaction.
+     *
+     * For legacy transactions, applies EIP-155 encoding (v = chainId * 2 + 35 + recoveryId)
+     * For modern transactions (EIP-1559, EIP-2930, etc.), uses yParity (0 or 1)
      */
     async signTransaction(
       transaction: TransactionSerializable
@@ -354,29 +360,37 @@ export function createKentuckySignerAccount(
       // Hash the serialized transaction
       const txHash = keccak256(serializedUnsigned)
 
-      // Sign the hash and get components directly from API
-      const { r, s, v } = await signHashWithComponents(txHash, chainId)
+      // Sign the hash - v is always 27 or 28 (recovery_id + 27)
+      const { r, s, v } = await signHashWithComponents(txHash)
 
-      // For EIP-1559 and EIP-2930 transactions, v is 0 or 1
-      // For legacy transactions, v is chainId * 2 + 35 + recovery
+      // Convert v (27/28) to recovery ID (0/1)
+      const recoveryId = v - 27
+
+      // Determine signature format based on transaction type
+      let signatureV: bigint
       let yParity: number
+
       if (
         transaction.type === 'eip1559' ||
         transaction.type === 'eip2930' ||
         transaction.type === 'eip4844' ||
         transaction.type === 'eip7702'
       ) {
-        yParity = v >= 27 ? v - 27 : v // Convert from 27/28 to 0/1 if needed
+        // Modern transactions use yParity directly (0 or 1)
+        yParity = recoveryId
+        signatureV = BigInt(yParity)
       } else {
-        // Legacy transaction - v already includes chain ID
-        yParity = v
+        // Legacy transaction - apply EIP-155 encoding
+        // v = chainId * 2 + 35 + recoveryId
+        signatureV = BigInt(chainId * 2 + 35 + recoveryId)
+        yParity = recoveryId
       }
 
       // Serialize with signature
       const serializedSigned = serializeTransaction(transaction, {
         r,
         s,
-        v: BigInt(yParity),
+        v: signatureV,
         yParity,
       } as any)
 
@@ -393,7 +407,7 @@ export function createKentuckySignerAccount(
       typedData: TypedDataDefinition<TTypedData, TPrimaryType>
     ): Promise<Hex> {
       const hash = hashTypedData(typedData)
-      return signHash(hash, defaultChainId)
+      return signHash(hash)
     },
   }) as KentuckySignerAccount
 
@@ -436,58 +450,11 @@ export function createKentuckySignerAccount(
     })
 
     // Sign the hash using Kentucky Signer
-    // r and s already have 0x prefix from signHashWithComponents
-    const { r, s, v } = await signHashWithComponents(authHash, chainId)
+    // v is always 27 or 28 (recovery_id + 27)
+    const { r, s, v } = await signHashWithComponents(authHash)
 
-    // Convert v to yParity (0 or 1)
-    // v can be 0, 1, 27, or 28 depending on the signing implementation
-    let yParity: number
-    if (v === 0 || v === 1) {
-      yParity = v
-    } else if (v >= 27 && v <= 28) {
-      yParity = v - 27
-    } else {
-      // For legacy/EIP-155 signatures: v = chainId * 2 + 35 + recovery
-      // recovery = (v - 35 - chainId * 2) % 2
-      yParity = (v - 35) % 2
-      if (yParity < 0) yParity = 0
-      if (yParity > 1) yParity = yParity % 2
-    }
-
-    // Verify the signature recovers to the correct address
-    // Kentucky Signer sometimes returns inconsistent v values, so we need to verify
-    // and try the other yParity if the first one doesn't recover correctly
-    const expectedAddress = session.evmAddress.toLowerCase()
-
-    // Try recovering with the calculated yParity
-    try {
-      const recoveredAddress = await recoverAddress({
-        hash: authHash,
-        signature: { r, s, v: BigInt(yParity + 27) }
-      })
-
-      if (recoveredAddress.toLowerCase() !== expectedAddress) {
-        // Try the other yParity
-        const altYParity = yParity === 0 ? 1 : 0
-        const altRecoveredAddress = await recoverAddress({
-          hash: authHash,
-          signature: { r, s, v: BigInt(altYParity + 27) }
-        })
-
-        if (altRecoveredAddress.toLowerCase() === expectedAddress) {
-          yParity = altYParity
-        } else {
-          throw new KentuckySignerError(
-            'Authorization signature does not recover to expected address',
-            'SIGNATURE_RECOVERY_FAILED',
-            `Expected ${expectedAddress}, got ${recoveredAddress} and ${altRecoveredAddress}`
-          )
-        }
-      }
-    } catch (err) {
-      if (err instanceof KentuckySignerError) throw err
-      // If recovery fails, proceed with calculated yParity (best effort)
-    }
+    // Convert v (27/28) to yParity (0/1) for EIP-7702
+    const yParity = v - 27
 
     return {
       chainId,

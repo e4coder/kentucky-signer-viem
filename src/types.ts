@@ -66,16 +66,19 @@ export interface AccountInfoResponse {
 
 /**
  * EVM signature response from Kentucky Signer
+ *
+ * Note: v is always 27 or 28 (standard format).
+ * EIP-155 encoding should be applied by the caller when needed for legacy transactions.
  */
 export interface EvmSignatureResponse {
   success: boolean
   signature: {
     r: Hex
     s: Hex
+    /** v value: 27 or 28 (recovery_id + 27) */
     v: number
     full: Hex
   }
-  chain_id: number
   signer_address: string
 }
 
@@ -163,8 +166,6 @@ export interface ClientOptions {
 export interface SignEvmRequest {
   /** Transaction hash to sign (32 bytes, hex encoded) */
   tx_hash: Hex
-  /** Chain ID */
-  chain_id: number
 }
 
 /**

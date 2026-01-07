@@ -296,9 +296,9 @@ export class SecureKentuckySignerClient {
   /**
    * Sign a raw hash for EVM (signed request)
    */
-  async signHash(hash: Hex, chainId: number, token: string): Promise<Hex> {
+  async signHash(hash: Hex, token: string): Promise<Hex> {
     const response = await this.signEvmTransaction(
-      { tx_hash: hash, chain_id: chainId },
+      { tx_hash: hash },
       token
     )
     return response.signature.full

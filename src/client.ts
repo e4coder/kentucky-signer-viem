@@ -218,9 +218,9 @@ export class KentuckySignerClient {
   /**
    * Sign an EVM transaction hash
    *
-   * @param request - Sign request with tx_hash and chain_id
+   * @param request - Sign request with tx_hash
    * @param token - JWT token
-   * @returns Signature response with r, s, v components
+   * @returns Signature response with r, s, v components (v is always 27 or 28)
    */
   async signEvmTransaction(
     request: SignEvmRequest,
@@ -239,13 +239,12 @@ export class KentuckySignerClient {
    * Convenience method that wraps signEvmTransaction.
    *
    * @param hash - 32-byte hash to sign (hex encoded with 0x prefix)
-   * @param chainId - Chain ID
    * @param token - JWT token
    * @returns Full signature (hex encoded with 0x prefix)
    */
-  async signHash(hash: Hex, chainId: number, token: string): Promise<Hex> {
+  async signHash(hash: Hex, token: string): Promise<Hex> {
     const response = await this.signEvmTransaction(
-      { tx_hash: hash, chain_id: chainId },
+      { tx_hash: hash },
       token
     )
     return response.signature.full
