@@ -15,6 +15,9 @@ A custom Viem account integration for the Kentucky Signer service, enabling EVM 
 - **React Integration** - Hooks and context for easy React app integration
 - **TypeScript Support** - Full type definitions included
 - **Session Management** - Automatic refresh and persistence options
+- **EIP-7702 Support** - Sign authorizations for EOA code delegation
+- **Relayer Integration** - Client for gasless transactions via relayer service
+- **Intent Signing** - Sign execution intents for smart account operations
 
 ## Installation
 
@@ -204,6 +207,205 @@ const account = createKentuckySignerAccount({
 })
 ```
 
+## EIP-7702 Authorization
+
+Sign authorizations to delegate your EOA's code to a smart contract, enabling features like batching and gas sponsorship.
+
+```typescript
+import { createPublicClient, http } from 'viem'
+import { arbitrum } from 'viem/chains'
+
+const publicClient = createPublicClient({
+  chain: arbitrum,
+  transport: http(),
+})
+
+// Get current transaction count for the account
+const txNonce = await publicClient.getTransactionCount({
+  address: account.address,
+})
+
+// Sign EIP-7702 authorization
+const authorization = await account.sign7702Authorization({
+  contractAddress: '0x...', // Smart account delegate contract
+  chainId: 42161, // Arbitrum
+}, BigInt(txNonce))
+
+// Result:
+// {
+//   chainId: 42161,
+//   contractAddress: '0x...',
+//   nonce: 0n,
+//   yParity: 0,
+//   r: '0x...',
+//   s: '0x...'
+// }
+```
+
+The authorization can be included in an EIP-7702 transaction's `authorizationList` to delegate the EOA.
+
+## Intent Signing for Relayed Execution
+
+Sign execution intents for gasless transactions via a relayer.
+
+```typescript
+import {
+  createExecutionIntent,
+  signIntent,
+  RelayerClient,
+} from 'kentucky-signer-viem'
+import { encodeFunctionData, parseEther } from 'viem'
+
+// Create relayer client
+const relayer = new RelayerClient({
+  baseUrl: 'https://relayer.example.com',
+})
+
+// Get current nonce from the delegate contract
+const nonce = await relayer.getNonce(42161, account.address)
+
+// Create an execution intent
+const intent = createExecutionIntent({
+  nonce,
+  target: '0x...', // Contract to call
+  value: parseEther('0.1'), // ETH to send (optional)
+  data: encodeFunctionData({
+    abi: [...],
+    functionName: 'transfer',
+    args: ['0x...', 1000n],
+  }),
+  deadline: BigInt(Math.floor(Date.now() / 1000) + 3600), // 1 hour (optional)
+})
+
+// Sign the intent
+const signedIntent = await signIntent(account, intent)
+```
+
+## Relayer Client
+
+The `RelayerClient` communicates with a relayer service to submit transactions on behalf of users.
+
+### Basic Usage
+
+```typescript
+import { RelayerClient, createRelayerClient } from 'kentucky-signer-viem'
+
+// Create client
+const relayer = new RelayerClient({
+  baseUrl: 'https://relayer.example.com',
+  timeout: 30000, // Optional, default 30s
+})
+
+// Or use the factory function
+const relayer = createRelayerClient('https://relayer.example.com')
+
+// Check health
+const health = await relayer.health()
+// { status: 'ok', relayer: '0x...', timestamp: '2024-...' }
+```
+
+### Get Nonce
+
+```typescript
+const nonce = await relayer.getNonce(42161, account.address)
+// Returns bigint nonce from the delegate contract
+```
+
+### Estimate Gas
+
+```typescript
+const estimate = await relayer.estimate(42161, account.address, intent)
+// {
+//   gasEstimate: '150000',
+//   gasCostWei: '30000000000000',
+//   sponsoredAvailable: true,
+//   tokenOptions: [
+//     { token: '0x...', symbol: 'USDC', estimatedFee: '0.05', feePercentage: 5 }
+//   ]
+// }
+```
+
+### Relay Transaction
+
+```typescript
+// Sponsored (relayer pays gas)
+const result = await relayer.relay(
+  42161,
+  account.address,
+  signedIntent,
+  'sponsored'
+)
+
+// Pay with ERC20 token
+const result = await relayer.relay(
+  42161,
+  account.address,
+  signedIntent,
+  { token: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' } // USDC on Arbitrum
+)
+
+if (result.success) {
+  console.log('TX Hash:', result.txHash)
+} else {
+  console.error('Failed:', result.error)
+}
+```
+
+### Gasless Onboarding
+
+For users with zero ETH, combine EIP-7702 authorization with relay to delegate and execute in a single transaction:
+
+```typescript
+import { createPublicClient, http } from 'viem'
+import { arbitrum } from 'viem/chains'
+
+const publicClient = createPublicClient({
+  chain: arbitrum,
+  transport: http(),
+})
+
+// Get current nonce
+const txNonce = await publicClient.getTransactionCount({
+  address: account.address,
+})
+
+// Sign EIP-7702 authorization to delegate EOA
+const authorization = await account.sign7702Authorization({
+  contractAddress: delegateAddress,
+  chainId: 42161,
+}, BigInt(txNonce))
+
+// Create and sign execution intent
+const nonce = await relayer.getNonce(42161, account.address)
+const intent = createExecutionIntent({
+  nonce,
+  target: '0x...',
+  data: '0x...',
+})
+const signedIntent = await signIntent(account, intent)
+
+// Relay with authorization - delegates EOA and executes in one tx
+const result = await relayer.relay(
+  42161,
+  account.address,
+  signedIntent,
+  'sponsored',
+  authorization // Include EIP-7702 authorization
+)
+```
+
+### Check Transaction Status
+
+```typescript
+const status = await relayer.getStatus(42161, txHash)
+// {
+//   status: 'confirmed', // 'pending' | 'confirmed' | 'failed'
+//   txHash: '0x...',
+//   blockNumber: 12345678,
+//   gasUsed: '120000'
+// }
+```
+
 ## Two-Factor Authentication
 
 ### Setup TOTP (Authenticator App)
@@ -318,6 +520,16 @@ await client.completeRecovery(accountId)
 | `createAccountWithPassword(options)` | Create new account with password |
 | `authenticateWithToken(...)` | Create session from JWT token |
 
+### Intent & Relayer Functions
+
+| Function | Description |
+|----------|-------------|
+| `createExecutionIntent(params)` | Create an execution intent for relayed execution |
+| `signIntent(account, intent)` | Sign an execution intent |
+| `signBatchIntents(account, intents)` | Sign multiple intents for batch execution |
+| `hashIntent(intent)` | Compute the hash of an execution intent |
+| `createRelayerClient(baseUrl)` | Create a relayer client |
+
 ### React Hooks
 
 | Hook | Description |
@@ -358,6 +570,19 @@ await client.completeRecovery(accountId)
 - `disableTOTP(code, token)` - Disable TOTP
 - `setupPIN(pin, token)` - Setup PIN
 - `disablePIN(pin, token)` - Disable PIN
+
+### Account Methods
+
+#### EIP-7702 Authorization
+- `account.sign7702Authorization(params, nonce)` - Sign authorization to delegate EOA code
+
+### Relayer Client Methods
+
+- `health()` - Check relayer health
+- `getNonce(chainId, address)` - Get account nonce from delegate contract
+- `estimate(chainId, address, intent)` - Estimate gas and fees
+- `relay(chainId, address, signedIntent, paymentMode, authorization?)` - Submit transaction
+- `getStatus(chainId, txHash)` - Get transaction status
 
 #### Guardian Recovery
 - `addGuardian(request, token)` - Add guardian passkey

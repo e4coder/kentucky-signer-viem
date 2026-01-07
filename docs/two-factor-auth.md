@@ -156,7 +156,6 @@ const client = new KentuckySignerClient({ baseUrl })
 // Sign with 2FA codes
 const response = await client.signEvmTransactionWith2FA({
   tx_hash: '0x...',
-  chain_id: 1,
   totp_code: '123456',
   pin: '654321',
 }, token)

@@ -205,7 +205,7 @@ All requests through the secure client are automatically signed:
 ```typescript
 // These requests are signed with the ephemeral key
 const signature = await secureClient.signEvmTransaction(
-  { tx_hash: '0x...', chain_id: 1 },
+  { tx_hash: '0x...' },
   token
 )
 

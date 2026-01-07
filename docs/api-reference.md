@@ -9,6 +9,11 @@ Complete API documentation for Kentucky Signer Viem.
 - [Authentication Functions](#authentication-functions)
 - [Types](#types)
 - [Errors](#errors)
+- [Secure Mode (Ephemeral Keys)](#secure-mode-ephemeral-keys)
+- [EIP-7702 Authorization](#eip-7702-authorization)
+- [Intent Signing](#intent-signing)
+- [RelayerClient](#relayerclient)
+- [Constants](#constants)
 
 ## KentuckySignerClient
 
@@ -282,7 +287,6 @@ async signEvmTransaction(
 ```typescript
 interface SignEvmRequest {
   tx_hash: `0x${string}` // 32-byte hash (hex)
-  chain_id: number
 }
 ```
 
@@ -293,13 +297,14 @@ interface EvmSignatureResponse {
   signature: {
     r: `0x${string}`
     s: `0x${string}`
-    v: number
+    v: number // 27 or 28 (standard format)
     full: `0x${string}` // Concatenated signature
   }
-  chain_id: number
   signer_address: string
 }
 ```
+
+**Note:** The `v` value is always 27 or 28 (standard recovery ID + 27). For legacy transactions, the caller should apply EIP-155 encoding (v = chainId * 2 + 35 + recoveryId) when needed.
 
 #### signEvmTransactionWith2FA
 
@@ -325,7 +330,7 @@ interface SignEvmRequestWith2FA extends SignEvmRequest {
 Convenience method for signing a hash.
 
 ```typescript
-async signHash(hash: Hex, chainId: number, token: string): Promise<Hex>
+async signHash(hash: Hex, token: string): Promise<Hex>
 ```
 
 ### Guardian Methods
@@ -828,9 +833,291 @@ const session = await secureClient.authenticateWithPasskey(accountId, {
 
 // Sign with ephemeral co-signature
 const signature = await secureClient.signEvmTransaction(
-  { tx_hash: hash, chain_id: 1 },
+  { tx_hash: hash },
   session.token
 )
 ```
 
 See [Secure Mode Documentation](./secure-mode.md) for detailed information.
+
+---
+
+## EIP-7702 Authorization
+
+Sign authorizations for delegating EOA code to smart contracts.
+
+### sign7702Authorization
+
+Sign an EIP-7702 authorization for code delegation.
+
+```typescript
+const authorization = await account.sign7702Authorization(
+  {
+    contractAddress: '0x...', // Smart account delegate
+    chainId: 42161, // Optional, defaults to account's chain
+    nonce: 0n, // Optional, defaults to current nonce
+    executor: 'self', // Optional, increments nonce if set
+  },
+  currentTxNonce // Current transaction nonce
+)
+```
+
+**Parameters:**
+```typescript
+interface SignAuthorizationParameters {
+  /** Contract address to delegate to */
+  contractAddress: Address
+  /** Chain ID (0 for all chains) */
+  chainId?: number
+  /** Authorization nonce */
+  nonce?: bigint
+  /** Set to 'self' if signing for own execution (increments nonce by 1) */
+  executor?: 'self'
+}
+```
+
+**Returns:**
+```typescript
+interface SignedAuthorization {
+  chainId: number
+  contractAddress: Address
+  nonce: bigint
+  yParity: number // 0 or 1
+  r: Hex
+  s: Hex
+}
+```
+
+---
+
+## Intent Signing
+
+Functions for creating and signing execution intents for relayed transactions.
+
+### createExecutionIntent
+
+Create an execution intent.
+
+```typescript
+import { createExecutionIntent } from 'kentucky-signer-viem'
+
+const intent = createExecutionIntent({
+  nonce: 0n,
+  target: '0x...',
+  value: parseEther('0.1'), // Optional, defaults to 0
+  data: '0x...', // Optional, defaults to '0x'
+  deadline: BigInt(Math.floor(Date.now() / 1000) + 3600), // Optional, defaults to 1 hour
+})
+```
+
+**Parameters:**
+```typescript
+interface CreateIntentParams {
+  /** Account nonce (from delegate contract) */
+  nonce: bigint
+  /** Contract to call */
+  target: Address
+  /** ETH value to send */
+  value?: bigint
+  /** Calldata */
+  data?: Hex
+  /** Expiration timestamp (unix seconds) */
+  deadline?: bigint
+}
+```
+
+**Returns:**
+```typescript
+interface ExecutionIntent {
+  nonce: bigint
+  deadline: bigint
+  target: Address
+  value: bigint
+  data: Hex
+}
+```
+
+### signIntent
+
+Sign an execution intent.
+
+```typescript
+import { signIntent } from 'kentucky-signer-viem'
+
+const signedIntent = await signIntent(account, intent)
+// { intent, signature: '0x...' }
+```
+
+### signBatchIntents
+
+Sign multiple intents for batch execution.
+
+```typescript
+import { signBatchIntents } from 'kentucky-signer-viem'
+
+const signedIntents = await signBatchIntents(account, [intent1, intent2])
+```
+
+### hashIntent
+
+Compute the hash of an execution intent.
+
+```typescript
+import { hashIntent } from 'kentucky-signer-viem'
+
+const intentHash = hashIntent(intent)
+// '0x...' (bytes32)
+```
+
+### hashBatchIntents
+
+Compute combined hash for batch intents.
+
+```typescript
+import { hashBatchIntents } from 'kentucky-signer-viem'
+
+const combinedHash = hashBatchIntents([intent1, intent2])
+```
+
+---
+
+## RelayerClient
+
+Client for interacting with a relayer service for gasless transactions.
+
+### Constructor
+
+```typescript
+import { RelayerClient, createRelayerClient } from 'kentucky-signer-viem'
+
+const relayer = new RelayerClient({
+  baseUrl: 'https://relayer.example.com',
+  timeout: 30000, // Optional, default 30s
+})
+
+// Or use factory function
+const relayer = createRelayerClient('https://relayer.example.com')
+```
+
+### Methods
+
+#### health
+
+Check if relayer is healthy.
+
+```typescript
+const health = await relayer.health()
+// { status: 'ok', relayer: '0x...', timestamp: '...' }
+```
+
+#### getNonce
+
+Get account nonce from the delegate contract.
+
+```typescript
+const nonce = await relayer.getNonce(chainId, accountAddress)
+// Returns bigint
+```
+
+#### estimate
+
+Estimate gas and fees for an intent.
+
+```typescript
+const estimate = await relayer.estimate(chainId, accountAddress, intent)
+```
+
+**Returns:**
+```typescript
+interface EstimateResponse {
+  gasEstimate: string
+  gasCostWei: string
+  sponsoredAvailable: boolean
+  tokenOptions: Array<{
+    token: Address
+    symbol: string
+    estimatedFee: string
+    feePercentage: number
+  }>
+}
+```
+
+#### relay
+
+Submit a signed intent for execution.
+
+```typescript
+// Sponsored mode (relayer pays gas)
+const result = await relayer.relay(
+  chainId,
+  accountAddress,
+  signedIntent,
+  'sponsored'
+)
+
+// Token payment mode
+const result = await relayer.relay(
+  chainId,
+  accountAddress,
+  signedIntent,
+  { token: '0x...' } // ERC20 token address
+)
+
+// With EIP-7702 authorization for gasless onboarding
+const result = await relayer.relay(
+  chainId,
+  accountAddress,
+  signedIntent,
+  'sponsored',
+  authorization // SignedAuthorization from sign7702Authorization
+)
+```
+
+**Parameters:**
+- `chainId` - Target chain ID
+- `accountAddress` - EOA address
+- `signedIntent` - Signed execution intent
+- `paymentMode` - `'sponsored'` or `{ token: Address }`
+- `authorization` - Optional EIP-7702 authorization for delegation
+
+**Returns:**
+```typescript
+interface RelayResponse {
+  success: boolean
+  txHash?: Hex
+  error?: string
+}
+```
+
+#### getStatus
+
+Get transaction status.
+
+```typescript
+const status = await relayer.getStatus(chainId, txHash)
+```
+
+**Returns:**
+```typescript
+interface StatusResponse {
+  status: 'pending' | 'confirmed' | 'failed'
+  txHash: Hex
+  blockNumber?: number
+  gasUsed?: string
+  tokenPaid?: string
+}
+```
+
+---
+
+## Constants
+
+### ALCHEMY_SEMI_MODULAR_ACCOUNT_7702
+
+Alchemy's SemiModularAccount7702 implementation address (same on all EVM chains).
+
+```typescript
+import { ALCHEMY_SEMI_MODULAR_ACCOUNT_7702 } from 'kentucky-signer-viem'
+
+// '0x69007702764179f14F51cdce752f4f775d74E139'
+```
