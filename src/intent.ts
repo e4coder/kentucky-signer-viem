@@ -1,12 +1,38 @@
 import {
   type Address,
   type Hex,
+  type TypedDataDomain,
   keccak256,
   encodeAbiParameters,
   parseAbiParameters,
   encodePacked,
 } from 'viem'
 import type { KentuckySignerAccount } from './account'
+
+// EIP-712 domain for KentuckyDelegate
+// Note: verifyingContract is the EOA address in EIP-7702 context
+export function getKentuckyDelegateDomain(
+  chainId: number,
+  verifyingContract: Address
+): TypedDataDomain {
+  return {
+    name: 'KentuckyDelegate',
+    version: '1',
+    chainId: chainId,
+    verifyingContract: verifyingContract,
+  }
+}
+
+// EIP-712 types for ExecutionIntent
+export const EXECUTION_INTENT_TYPES = {
+  ExecutionIntent: [
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' },
+    { name: 'target', type: 'address' },
+    { name: 'value', type: 'uint256' },
+    { name: 'data', type: 'bytes' },
+  ],
+} as const
 
 /**
  * Execution intent to be signed by the EOA owner
@@ -101,31 +127,41 @@ export function hashIntent(intent: ExecutionIntent): Hex {
 }
 
 /**
- * Sign an execution intent using a Kentucky Signer account
+ * Sign an execution intent using a Kentucky Signer account with EIP-712
  *
  * @param account - Kentucky Signer account
  * @param intent - The execution intent to sign
+ * @param chainId - Chain ID for the EIP-712 domain
+ * @param accountAddress - The EOA address (verifyingContract in EIP-712 domain)
  * @returns Signed intent
  *
  * @example
  * ```typescript
  * const account = useKentuckySignerAccount()
  * const intent = createExecutionIntent({ nonce: 0n, target: '0x...' })
- * const signedIntent = await signIntent(account, intent)
+ * const signedIntent = await signIntent(account, intent, 42161, account.address)
  * ```
  */
 export async function signIntent(
   account: KentuckySignerAccount,
-  intent: ExecutionIntent
+  intent: ExecutionIntent,
+  chainId: number,
+  accountAddress: Address
 ): Promise<SignedIntent> {
-  // Compute intent hash
-  const intentHash = hashIntent(intent)
-
-  // Sign the hash as a message (will be recovered with ECDSA)
-  // Kentucky Signer returns signatures with v = 27 or 28 (standard format)
-  // which is directly compatible with OpenZeppelin's ECDSA.recover
-  const signature = await account.signMessage({
-    message: { raw: intentHash },
+  // Sign using EIP-712 typed data
+  // The domain includes chainId and verifyingContract (the EOA address)
+  // This prevents cross-chain replay attacks
+  const signature = await account.signTypedData({
+    domain: getKentuckyDelegateDomain(chainId, accountAddress),
+    types: EXECUTION_INTENT_TYPES,
+    primaryType: 'ExecutionIntent',
+    message: {
+      nonce: intent.nonce,
+      deadline: intent.deadline,
+      target: intent.target,
+      value: intent.value,
+      data: intent.data,
+    },
   })
 
   return {
@@ -150,16 +186,20 @@ export function hashBatchIntents(intents: ExecutionIntent[]): Hex {
  *
  * @param account - Kentucky Signer account
  * @param intents - Array of execution intents
+ * @param chainId - Chain ID for the EIP-712 domain
+ * @param accountAddress - The EOA address (verifyingContract in EIP-712 domain)
  * @returns Array of signed intents
  */
 export async function signBatchIntents(
   account: KentuckySignerAccount,
-  intents: ExecutionIntent[]
+  intents: ExecutionIntent[],
+  chainId: number,
+  accountAddress: Address
 ): Promise<SignedIntent[]> {
   const signedIntents: SignedIntent[] = []
 
   for (const intent of intents) {
-    const signed = await signIntent(account, intent)
+    const signed = await signIntent(account, intent, chainId, accountAddress)
     signedIntents.push(signed)
   }
 

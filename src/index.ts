@@ -142,6 +142,9 @@ export {
   signBatchIntents,
   hashIntent,
   hashBatchIntents,
+  // EIP-712 helpers
+  getKentuckyDelegateDomain,
+  EXECUTION_INTENT_TYPES,
   type ExecutionIntent,
   type SignedIntent,
   type CreateIntentParams,
