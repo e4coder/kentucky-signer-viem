@@ -251,21 +251,41 @@ export function KentuckySignerProvider({
         defaultChainId,
         secureClient: useSecureClient ? secureClient : undefined,
         onSessionExpired: async () => {
-          // Try to refresh the session
-          const newSession = await refreshSessionIfNeeded(session, baseUrl, 0)
-          setState((s) => ({
-            ...s,
-            session: newSession,
-            account: s.account
-              ? { ...s.account, session: newSession }
-              : null,
-          }))
-          return newSession
+          // Try to refresh the session (use secure client if in secure mode)
+          try {
+            const newSession = await refreshSessionIfNeeded(
+              session,
+              baseUrl,
+              0,
+              useSecureClient ? secureClient : undefined
+            )
+            setState((s) => ({
+              ...s,
+              session: newSession,
+              account: s.account
+                ? { ...s.account, session: newSession }
+                : null,
+            }))
+            return newSession
+          } catch (error) {
+            // Refresh failed - clear auth state
+            if (storage) {
+              localStorage.removeItem(`${storageKeyPrefix}_session`)
+            }
+            setState((s) => ({
+              ...s,
+              isAuthenticated: false,
+              session: null,
+              account: null,
+              error: error as Error,
+            }))
+            throw error // Re-throw so the calling code knows auth failed
+          }
         },
         on2FARequired: handle2FARequired,
       })
     },
-    [baseUrl, defaultChainId, secureClient, handle2FARequired]
+    [baseUrl, defaultChainId, secureClient, handle2FARequired, storage, storageKeyPrefix]
   )
 
   // Restore session from storage on mount
@@ -279,9 +299,16 @@ export function KentuckySignerProvider({
 
         const session: AuthSession = JSON.parse(savedSession)
         if (!isSessionValid(session)) {
-          // Try to refresh
+          // Try to refresh (use secure client if in secure mode)
           try {
-            const refreshed = await refreshSessionIfNeeded(session, baseUrl, 0)
+            const savedSecureMode = localStorage.getItem(`${storageKeyPrefix}_secure_mode`)
+            const isSecureMode = savedSecureMode === 'true'
+            const refreshed = await refreshSessionIfNeeded(
+              session,
+              baseUrl,
+              0,
+              isSecureMode ? secureClient : undefined
+            )
             localStorage.setItem(
               `${storageKeyPrefix}_session`,
               JSON.stringify(refreshed)
@@ -327,7 +354,7 @@ export function KentuckySignerProvider({
     }
 
     restoreSession()
-  }, [storage, storageKeyPrefix, baseUrl, createAccount])
+  }, [storage, storageKeyPrefix, baseUrl, createAccount, secureClient])
 
   // Authenticate with passkey or existing session
   const authenticate = useCallback(
@@ -431,7 +458,13 @@ export function KentuckySignerProvider({
     if (!state.session) return
 
     try {
-      const refreshed = await refreshSessionIfNeeded(state.session, baseUrl)
+      // Use secure client if in secure mode for ephemeral key rotation
+      const refreshed = await refreshSessionIfNeeded(
+        state.session,
+        baseUrl,
+        60000,
+        state.secureMode ? secureClient : undefined
+      )
 
       if (refreshed !== state.session) {
         if (storage) {
@@ -451,9 +484,19 @@ export function KentuckySignerProvider({
         })
       }
     } catch (error) {
-      setState((s) => ({ ...s, error: error as Error }))
+      // Refresh failed - clear auth state
+      if (storage) {
+        localStorage.removeItem(`${storageKeyPrefix}_session`)
+      }
+      setState((s) => ({
+        ...s,
+        isAuthenticated: false,
+        session: null,
+        account: null,
+        error: error as Error,
+      }))
     }
-  }, [state.session, baseUrl, createAccount, storage, storageKeyPrefix])
+  }, [state.session, baseUrl, createAccount, storage, storageKeyPrefix, state.secureMode, secureClient])
 
   // Clear error
   const clearError = useCallback(() => {

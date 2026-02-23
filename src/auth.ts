@@ -9,6 +9,7 @@ import type {
   AccountCreationResponse,
 } from './types'
 import { KentuckySignerClient, KentuckySignerError } from './client'
+import type { SecureKentuckySignerClient } from './secure-client'
 import { base64UrlEncode, base64UrlDecode } from './utils'
 import type { Address } from 'viem'
 
@@ -318,19 +319,28 @@ export function isSessionValid(session: AuthSession, bufferMs: number = 60000): 
  * @param session - Current session
  * @param baseUrl - Kentucky Signer API URL
  * @param bufferMs - Buffer time before expiration (default 60 seconds)
+ * @param secureClient - Optional secure client for ephemeral key rotation in secure mode
  * @returns Updated session (or original if still valid)
  */
 export async function refreshSessionIfNeeded(
   session: AuthSession,
   baseUrl: string,
-  bufferMs: number = 60000
+  bufferMs: number = 60000,
+  secureClient?: SecureKentuckySignerClient
 ): Promise<AuthSession> {
   if (isSessionValid(session, bufferMs)) {
     return session
   }
 
-  const client = new KentuckySignerClient({ baseUrl })
-  const authResponse = await client.refreshToken(session.token)
+  let authResponse
+  if (secureClient) {
+    // Use secure client which rotates ephemeral key
+    authResponse = await secureClient.refreshToken(session.token)
+  } else {
+    // Standard client for non-secure mode
+    const client = new KentuckySignerClient({ baseUrl })
+    authResponse = await client.refreshToken(session.token)
+  }
 
   return {
     ...session,
