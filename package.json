@@ -1,6 +1,6 @@
 {
   "name": "kentucky-signer-viem",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Custom Viem account integration for Kentucky Signer with passkey authentication",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
