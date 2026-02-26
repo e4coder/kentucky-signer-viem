@@ -8,6 +8,11 @@ import type {
   StatusResponse,
   TransactionStatus,
   Authorization7702,
+  SolanaRelayInfo,
+  SolanaEstimateResponse,
+  SolanaRelayResponse,
+  SolanaStatusResponse,
+  SolanaTransactionStatus,
 } from '../relayer-client'
 import type { ExecutionIntent, SignedIntent } from '../intent'
 
@@ -315,4 +320,299 @@ export function useNonce(
   }, [address, fetchNonce])
 
   return { nonce, isLoading, error, refresh: fetchNonce }
+}
+
+// ============================================================================
+// Solana Relay Hooks
+// ============================================================================
+
+/**
+ * Hook for getting Solana relayer info
+ */
+export interface UseSolanaRelayInfoResult {
+  /** Solana relayer info */
+  info: SolanaRelayInfo | null
+  /** Whether info is being fetched */
+  isLoading: boolean
+  /** Last error */
+  error: Error | null
+  /** Refresh info */
+  refresh: () => void
+}
+
+/**
+ * Hook for getting Solana relayer info (auto-fetches on mount)
+ *
+ * @param client - Relayer client instance
+ * @returns Solana relayer info and state
+ *
+ * @example
+ * ```tsx
+ * const { info, isLoading } = useSolanaRelayInfo(relayer)
+ *
+ * if (info) {
+ *   console.log('Relayer pubkey:', info.relayerPublicKey)
+ *   console.log('Network:', info.network)
+ * }
+ * ```
+ */
+export function useSolanaRelayInfo(
+  client: RelayerClient
+): UseSolanaRelayInfoResult {
+  const [info, setInfo] = useState<SolanaRelayInfo | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  const fetchInfo = useCallback(async () => {
+    setIsLoading(true)
+    try {
+      const result = await client.getSolanaInfo()
+      setInfo(result)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error('Failed to fetch Solana relay info'))
+    } finally {
+      setIsLoading(false)
+    }
+  }, [client])
+
+  useEffect(() => {
+    fetchInfo()
+  }, [fetchInfo])
+
+  return { info, isLoading, error, refresh: fetchInfo }
+}
+
+/**
+ * Hook for estimating Solana relay fees
+ */
+export interface UseSolanaEstimateResult {
+  /** Estimate Solana relay fees */
+  estimate: (transaction?: string, versioned?: boolean) => Promise<SolanaEstimateResponse | null>
+  /** Last estimate response */
+  estimateResponse: SolanaEstimateResponse | null
+  /** Whether estimate is in progress */
+  isEstimating: boolean
+  /** Last error */
+  error: Error | null
+}
+
+/**
+ * Hook for estimating Solana relay fees
+ *
+ * @param client - Relayer client instance
+ * @returns Estimate functions and state
+ *
+ * @example
+ * ```tsx
+ * const { estimate, estimateResponse, isEstimating } = useSolanaEstimate(relayer)
+ *
+ * const handleEstimate = async () => {
+ *   await estimate(base64Transaction)
+ * }
+ *
+ * if (estimateResponse) {
+ *   console.log('Fee:', estimateResponse.feeSol, 'SOL')
+ * }
+ * ```
+ */
+export function useSolanaEstimate(
+  client: RelayerClient
+): UseSolanaEstimateResult {
+  const [estimateResponse, setEstimateResponse] = useState<SolanaEstimateResponse | null>(null)
+  const [isEstimating, setIsEstimating] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  const estimate = useCallback(
+    async (
+      transaction?: string,
+      versioned?: boolean
+    ): Promise<SolanaEstimateResponse | null> => {
+      setIsEstimating(true)
+      setError(null)
+
+      try {
+        const response = await client.estimateSolana(transaction, versioned)
+        setEstimateResponse(response)
+        return response
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error('Solana estimate failed')
+        setError(error)
+        return null
+      } finally {
+        setIsEstimating(false)
+      }
+    },
+    [client]
+  )
+
+  return { estimate, estimateResponse, isEstimating, error }
+}
+
+/**
+ * Hook for relaying Solana transactions
+ */
+export interface UseRelaySolanaResult {
+  /** Relay a Solana transaction */
+  relay: (transaction: string, versioned?: boolean) => Promise<SolanaRelayResponse>
+  /** Whether a relay is in progress */
+  isRelaying: boolean
+  /** Last relay response */
+  response: SolanaRelayResponse | null
+  /** Last error */
+  error: Error | null
+  /** Reset state */
+  reset: () => void
+}
+
+/**
+ * Hook for relaying Solana transactions through the Kentucky Signer Relayer
+ *
+ * @param client - Relayer client instance
+ * @returns Relay functions and state
+ *
+ * @example
+ * ```tsx
+ * const { relay, isRelaying, response, error } = useRelaySolana(relayer)
+ *
+ * const handleRelay = async () => {
+ *   const result = await relay(base64Transaction)
+ *   if (result.success) {
+ *     console.log('Signature:', result.signature)
+ *   }
+ * }
+ * ```
+ */
+export function useRelaySolana(
+  client: RelayerClient
+): UseRelaySolanaResult {
+  const [isRelaying, setIsRelaying] = useState(false)
+  const [response, setResponse] = useState<SolanaRelayResponse | null>(null)
+  const [error, setError] = useState<Error | null>(null)
+
+  const relay = useCallback(
+    async (
+      transaction: string,
+      versioned?: boolean
+    ): Promise<SolanaRelayResponse> => {
+      setIsRelaying(true)
+      setError(null)
+
+      try {
+        const result = await client.relaySolana(transaction, versioned)
+        setResponse(result)
+        return result
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error('Solana relay failed')
+        setError(error)
+        return { success: false, error: error.message }
+      } finally {
+        setIsRelaying(false)
+      }
+    },
+    [client]
+  )
+
+  const reset = useCallback(() => {
+    setResponse(null)
+    setError(null)
+  }, [])
+
+  return { relay, isRelaying, response, error, reset }
+}
+
+/**
+ * Hook for tracking Solana transaction status
+ */
+export interface UseSolanaTransactionStatusResult {
+  /** Current transaction status */
+  status: SolanaTransactionStatus | null
+  /** Full status response */
+  statusResponse: SolanaStatusResponse | null
+  /** Whether status is being fetched */
+  isLoading: boolean
+  /** Last error */
+  error: Error | null
+  /** Manually refresh status */
+  refresh: () => void
+}
+
+/**
+ * Hook for tracking Solana transaction status with polling
+ *
+ * @param client - Relayer client instance
+ * @param signature - Transaction signature to track (null to disable)
+ * @param pollInterval - Polling interval in ms (default: 3000)
+ * @returns Transaction status and state
+ *
+ * @example
+ * ```tsx
+ * const { status, statusResponse, isLoading } = useSolanaTransactionStatus(
+ *   relayer,
+ *   signature
+ * )
+ *
+ * if (status === 'confirmed') {
+ *   console.log('Confirmed in slot:', statusResponse?.slot)
+ * }
+ * ```
+ */
+export function useSolanaTransactionStatus(
+  client: RelayerClient,
+  signature: string | null,
+  pollInterval: number = 3000
+): UseSolanaTransactionStatusResult {
+  const [status, setStatus] = useState<SolanaTransactionStatus | null>(null)
+  const [statusResponse, setStatusResponse] = useState<SolanaStatusResponse | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  const fetchStatus = useCallback(async () => {
+    if (!signature) return
+
+    setIsLoading(true)
+    try {
+      const response = await client.getSolanaStatus(signature)
+      setStatusResponse(response)
+      setStatus(response.status)
+      setError(null)
+
+      // Stop polling if transaction is finalized
+      if (response.status === 'confirmed' || response.status === 'failed') {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current)
+          intervalRef.current = null
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error('Failed to fetch Solana status'))
+    } finally {
+      setIsLoading(false)
+    }
+  }, [client, signature])
+
+  // Start polling when signature is set
+  useEffect(() => {
+    if (!signature) {
+      setStatus(null)
+      setStatusResponse(null)
+      return
+    }
+
+    // Fetch immediately
+    fetchStatus()
+
+    // Start polling
+    intervalRef.current = setInterval(fetchStatus, pollInterval)
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
+  }, [signature, pollInterval, fetchStatus])
+
+  return { status, statusResponse, isLoading, error, refresh: fetchStatus }
 }

@@ -10,6 +10,15 @@ import type {
   AccountCreationResponse,
   SignEvmRequest,
   SignEvmRequestWith2FA,
+  SignBitcoinRequest,
+  SignBitcoinRequestWith2FA,
+  BitcoinSignatureResponse,
+  SignSolanaRequest,
+  SignSolanaRequestWith2FA,
+  SolanaSignatureResponse,
+  SignTronRequest,
+  SignTronRequestWith2FA,
+  TronSignatureResponse,
   CreatePasswordAccountRequest,
   PasswordAuthRequest,
   AddPasswordRequest,
@@ -709,6 +718,126 @@ export class KentuckySignerClient {
     token: string
   ): Promise<EvmSignatureResponse> {
     return this.request<EvmSignatureResponse>('/api/sign/evm', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  // ============================================================================
+  // Bitcoin Signing
+  // ============================================================================
+
+  /**
+   * Sign a Bitcoin sighash
+   *
+   * @param request - Sign request with sighash and sighash_type
+   * @param token - JWT token
+   * @returns DER-encoded signature response
+   */
+  async signBitcoinTransaction(
+    request: SignBitcoinRequest,
+    token: string
+  ): Promise<BitcoinSignatureResponse> {
+    return this.request<BitcoinSignatureResponse>('/api/sign/bitcoin', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * Sign a Bitcoin sighash with 2FA
+   *
+   * @param request - Sign request with sighash, sighash_type, and optional 2FA codes
+   * @param token - JWT token
+   * @returns DER-encoded signature response
+   */
+  async signBitcoinTransactionWith2FA(
+    request: SignBitcoinRequestWith2FA,
+    token: string
+  ): Promise<BitcoinSignatureResponse> {
+    return this.request<BitcoinSignatureResponse>('/api/sign/bitcoin', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  // ============================================================================
+  // Solana Signing
+  // ============================================================================
+
+  /**
+   * Sign a Solana transaction message
+   *
+   * @param request - Sign request with base64-encoded message
+   * @param token - JWT token
+   * @returns Base64-encoded Ed25519 signature
+   */
+  async signSolanaTransaction(
+    request: SignSolanaRequest,
+    token: string
+  ): Promise<SolanaSignatureResponse> {
+    return this.request<SolanaSignatureResponse>('/api/sign/solana', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * Sign a Solana transaction message with 2FA
+   *
+   * @param request - Sign request with base64-encoded message and optional 2FA codes
+   * @param token - JWT token
+   * @returns Base64-encoded Ed25519 signature
+   */
+  async signSolanaTransactionWith2FA(
+    request: SignSolanaRequestWith2FA,
+    token: string
+  ): Promise<SolanaSignatureResponse> {
+    return this.request<SolanaSignatureResponse>('/api/sign/solana', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  // ============================================================================
+  // TRON Signing
+  // ============================================================================
+
+  /**
+   * Sign a TRON transaction hash
+   *
+   * @param request - Sign request with tx_hash
+   * @param token - JWT token
+   * @returns Signature response with r, s, v components
+   */
+  async signTronTransaction(
+    request: SignTronRequest,
+    token: string
+  ): Promise<TronSignatureResponse> {
+    return this.request<TronSignatureResponse>('/api/sign/tron', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * Sign a TRON transaction hash with 2FA
+   *
+   * @param request - Sign request with tx_hash and optional 2FA codes
+   * @param token - JWT token
+   * @returns Signature response with r, s, v components
+   */
+  async signTronTransactionWith2FA(
+    request: SignTronRequestWith2FA,
+    token: string
+  ): Promise<TronSignatureResponse> {
+    return this.request<TronSignatureResponse>('/api/sign/tron', {
       method: 'POST',
       token,
       body: JSON.stringify(request),

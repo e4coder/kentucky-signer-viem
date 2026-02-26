@@ -24,6 +24,8 @@ export interface AuthSession {
   btcAddress?: string
   /** Solana address derived from the account */
   solAddress?: string
+  /** TRON address derived from the account */
+  tronAddress?: string
   /** Token expiration timestamp (Unix ms) */
   expiresAt: number
 }
@@ -57,6 +59,7 @@ export interface AccountInfoResponse {
     evm: string
     bitcoin: string
     solana: string
+    tron: string
   }
   passkeys: Array<{
     credential_id: string
@@ -192,6 +195,7 @@ export interface AccountCreationResponse {
     evm: string
     bitcoin: string
     solana: string
+    tron: string
   }
 }
 
@@ -316,6 +320,7 @@ export interface AccountInfoExtendedResponse {
     evm: string
     bitcoin: string
     solana: string
+    tron: string
   }
   auth_config: AuthConfig
   passkey_count: number
@@ -567,4 +572,114 @@ export interface SignEvmRequestWith2FA extends SignEvmRequest {
   totp_code?: string
   /** PIN (required if PIN is enabled) */
   pin?: string
+}
+
+// ============================================================================
+// Bitcoin Signing Types
+// ============================================================================
+
+/**
+ * Sign Bitcoin transaction request
+ */
+export interface SignBitcoinRequest {
+  /** Transaction sighash to sign (32 bytes, hex encoded) */
+  sighash: string
+  /** Sighash type: 1=ALL, 2=NONE, 3=SINGLE */
+  sighash_type: number
+}
+
+/**
+ * Sign Bitcoin request with optional 2FA codes
+ */
+export interface SignBitcoinRequestWith2FA extends SignBitcoinRequest {
+  /** TOTP code (required if TOTP is enabled) */
+  totp_code?: string
+  /** PIN (required if PIN is enabled) */
+  pin?: string
+}
+
+/**
+ * Bitcoin signature response from Kentucky Signer
+ */
+export interface BitcoinSignatureResponse {
+  success: boolean
+  signature: {
+    /** DER-encoded signature (hex) */
+    der: string
+    /** Signature byte length */
+    length: number
+  }
+  /** Echoed sighash type */
+  sighash_type: number
+}
+
+// ============================================================================
+// Solana Signing Types
+// ============================================================================
+
+/**
+ * Sign Solana transaction request
+ */
+export interface SignSolanaRequest {
+  /** Base64-encoded transaction message to sign */
+  message: string
+}
+
+/**
+ * Sign Solana request with optional 2FA codes
+ */
+export interface SignSolanaRequestWith2FA extends SignSolanaRequest {
+  /** TOTP code (required if TOTP is enabled) */
+  totp_code?: string
+  /** PIN (required if PIN is enabled) */
+  pin?: string
+}
+
+/**
+ * Solana signature response from Kentucky Signer
+ */
+export interface SolanaSignatureResponse {
+  success: boolean
+  /** Base64-encoded Ed25519 signature (64 bytes) */
+  signature: string
+}
+
+// ============================================================================
+// TRON Signing Types
+// ============================================================================
+
+/**
+ * Sign TRON transaction request
+ */
+export interface SignTronRequest {
+  /** Transaction hash to sign (32 bytes, hex encoded) */
+  tx_hash: string
+}
+
+/**
+ * Sign TRON request with optional 2FA codes
+ */
+export interface SignTronRequestWith2FA extends SignTronRequest {
+  /** TOTP code (required if TOTP is enabled) */
+  totp_code?: string
+  /** PIN (required if PIN is enabled) */
+  pin?: string
+}
+
+/**
+ * TRON signature response from Kentucky Signer
+ */
+export interface TronSignatureResponse {
+  success: boolean
+  signature: {
+    /** R component (hex) */
+    r: string
+    /** S component (hex) */
+    s: string
+    /** Recovery ID */
+    v: number
+    /** Full 65-byte signature (hex) */
+    full: string
+  }
+  signer_address: string
 }

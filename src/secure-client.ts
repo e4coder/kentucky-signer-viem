@@ -18,6 +18,15 @@ import type {
   PasskeyCredential,
   AccountCreationResponse,
   SignEvmRequest,
+  SignBitcoinRequest,
+  SignBitcoinRequestWith2FA,
+  BitcoinSignatureResponse,
+  SignSolanaRequest,
+  SignSolanaRequestWith2FA,
+  SolanaSignatureResponse,
+  SignTronRequest,
+  SignTronRequestWith2FA,
+  TronSignatureResponse,
   CreatePasswordAccountRequest,
   PasswordAuthRequest,
   AddPasswordRequest,
@@ -302,6 +311,102 @@ export class SecureKentuckySignerClient {
       token
     )
     return response.signature.full
+  }
+
+  // ============================================================================
+  // Bitcoin Signing
+  // ============================================================================
+
+  /**
+   * Sign a Bitcoin sighash (signed request)
+   */
+  async signBitcoinTransaction(
+    request: SignBitcoinRequest,
+    token: string
+  ): Promise<BitcoinSignatureResponse> {
+    return this.request<BitcoinSignatureResponse>('/api/sign/bitcoin', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * Sign a Bitcoin sighash with 2FA (signed request)
+   */
+  async signBitcoinTransactionWith2FA(
+    request: SignBitcoinRequestWith2FA,
+    token: string
+  ): Promise<BitcoinSignatureResponse> {
+    return this.request<BitcoinSignatureResponse>('/api/sign/bitcoin', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  // ============================================================================
+  // Solana Signing
+  // ============================================================================
+
+  /**
+   * Sign a Solana transaction message (signed request)
+   */
+  async signSolanaTransaction(
+    request: SignSolanaRequest,
+    token: string
+  ): Promise<SolanaSignatureResponse> {
+    return this.request<SolanaSignatureResponse>('/api/sign/solana', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * Sign a Solana transaction message with 2FA (signed request)
+   */
+  async signSolanaTransactionWith2FA(
+    request: SignSolanaRequestWith2FA,
+    token: string
+  ): Promise<SolanaSignatureResponse> {
+    return this.request<SolanaSignatureResponse>('/api/sign/solana', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  // ============================================================================
+  // TRON Signing
+  // ============================================================================
+
+  /**
+   * Sign a TRON transaction hash (signed request)
+   */
+  async signTronTransaction(
+    request: SignTronRequest,
+    token: string
+  ): Promise<TronSignatureResponse> {
+    return this.request<TronSignatureResponse>('/api/sign/tron', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * Sign a TRON transaction hash with 2FA (signed request)
+   */
+  async signTronTransactionWith2FA(
+    request: SignTronRequestWith2FA,
+    token: string
+  ): Promise<TronSignatureResponse> {
+    return this.request<TronSignatureResponse>('/api/sign/tron', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(request),
+    })
   }
 
   /**

@@ -184,6 +184,7 @@ export async function authenticateWithPasskey(
     evmAddress: accountInfo.addresses.evm as Address,
     btcAddress: accountInfo.addresses.bitcoin,
     solAddress: accountInfo.addresses.solana,
+    tronAddress: accountInfo.addresses.tron,
     expiresAt,
   }
 }
@@ -216,6 +217,7 @@ export async function authenticateWithToken(
     evmAddress: accountInfo.addresses.evm as Address,
     btcAddress: accountInfo.addresses.bitcoin,
     solAddress: accountInfo.addresses.solana,
+    tronAddress: accountInfo.addresses.tron,
     expiresAt: expiresAt ?? Date.now() + 3600000, // Default 1 hour if not specified
   }
 }
@@ -398,6 +400,7 @@ export async function authenticateWithPassword(
     evmAddress: accountInfo.addresses.evm as Address,
     btcAddress: accountInfo.addresses.bitcoin,
     solAddress: accountInfo.addresses.solana,
+    tronAddress: accountInfo.addresses.tron,
     expiresAt,
   }
 }

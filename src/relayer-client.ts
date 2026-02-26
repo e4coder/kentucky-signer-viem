@@ -87,6 +87,69 @@ export interface StatusResponse {
   tokenPaid?: string
 }
 
+// ============================================================================
+// Solana Relay Types
+// ============================================================================
+
+/**
+ * Solana relayer info
+ */
+export interface SolanaRelayInfo {
+  /** Relayer's Solana public key (base58) */
+  relayerPublicKey: string
+  /** Solana network (mainnet-beta, devnet, etc.) */
+  network: string
+}
+
+/**
+ * Solana fee estimate response
+ */
+export interface SolanaEstimateResponse {
+  /** Estimated fee in lamports */
+  feeLamports: string
+  /** Estimated fee in SOL */
+  feeSol: string
+  /** Priority fee in lamports */
+  priorityFee: string
+  /** Relayer public key to use as feePayer */
+  relayerPublicKey: string
+}
+
+/**
+ * Solana relay response
+ */
+export interface SolanaRelayResponse {
+  /** Whether the relay was successful */
+  success: boolean
+  /** Transaction signature if successful */
+  signature?: string
+  /** Error message if failed */
+  error?: string
+}
+
+/**
+ * Solana transaction status
+ */
+export type SolanaTransactionStatus = 'pending' | 'confirmed' | 'failed'
+
+/**
+ * Solana transaction status response
+ */
+export interface SolanaStatusResponse {
+  /** Current status */
+  status: SolanaTransactionStatus
+  /** Transaction signature */
+  signature: string
+  /** Slot number if confirmed */
+  slot?: number
+  /** Block time (unix timestamp) if confirmed */
+  blockTime?: number
+  /** Transaction fee in lamports if confirmed */
+  fee?: number
+  /** Error message if failed */
+  error?: string
+}
+
 /**
  * Relayer client options
  */
@@ -261,6 +324,79 @@ export class RelayerClient {
    */
   async getStatus(chainId: number, txHash: Hex): Promise<StatusResponse> {
     const response = await this.fetch(`/status/${chainId}/${txHash}`)
+    return response
+  }
+
+  // ==========================================================================
+  // Solana Relay Methods
+  // ==========================================================================
+
+  /**
+   * Get Solana relayer info (relayer public key + network)
+   *
+   * @returns Solana relayer info
+   */
+  async getSolanaInfo(): Promise<SolanaRelayInfo> {
+    const response = await this.fetch('/solana/info')
+    return response
+  }
+
+  /**
+   * Estimate Solana relay fees
+   *
+   * @param transaction - Optional base64-encoded serialized transaction
+   * @param versioned - Whether this is a versioned (v0) transaction (default: false)
+   * @returns Fee estimate with relayer public key
+   */
+  async estimateSolana(
+    transaction?: string,
+    versioned?: boolean
+  ): Promise<SolanaEstimateResponse> {
+    const response = await this.fetch('/solana/estimate', {
+      method: 'POST',
+      body: JSON.stringify({ transaction, versioned }),
+    })
+    return response
+  }
+
+  /**
+   * Relay a user-signed Solana transaction
+   *
+   * @param transaction - Base64-encoded serialized transaction (user-signed, relayer as feePayer)
+   * @param versioned - Whether this is a versioned (v0) transaction (default: false)
+   * @returns Relay response with transaction signature
+   *
+   * @example
+   * ```typescript
+   * // 1. Get relayer info to use as feePayer
+   * const info = await relayer.getSolanaInfo()
+   *
+   * // 2. Build transaction with relayer as feePayer
+   * // 3. User partially signs the transaction
+   * // 4. Serialize and relay
+   * const result = await relayer.relaySolana(base64Transaction)
+   * console.log('Signature:', result.signature)
+   * ```
+   */
+  async relaySolana(
+    transaction: string,
+    versioned?: boolean
+  ): Promise<SolanaRelayResponse> {
+    const response = await this.fetch('/solana/relay', {
+      method: 'POST',
+      body: JSON.stringify({ transaction, versioned }),
+    })
+    return response
+  }
+
+  /**
+   * Get Solana transaction status by signature
+   *
+   * @param signature - Transaction signature to check
+   * @returns Transaction status
+   */
+  async getSolanaStatus(signature: string): Promise<SolanaStatusResponse> {
+    const response = await this.fetch(`/solana/status/${signature}`)
     return response
   }
 

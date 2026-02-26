@@ -19,7 +19,13 @@ import {
   numberToHex,
 } from 'viem'
 import { toAccount } from 'viem/accounts'
-import type { AuthSession, KentuckySignerConfig } from './types'
+import type {
+  AuthSession,
+  KentuckySignerConfig,
+  BitcoinSignatureResponse,
+  SolanaSignatureResponse,
+  TronSignatureResponse,
+} from './types'
 import { KentuckySignerClient, KentuckySignerError } from './client'
 import { SecureKentuckySignerClient } from './secure-client'
 import type { EphemeralKeyManager } from './ephemeral'
@@ -132,6 +138,12 @@ export interface KentuckySignerAccount extends Omit<LocalAccount<'kentuckySigner
   session: AuthSession
   /** Update the session (e.g., after refresh) */
   updateSession: (session: AuthSession) => void
+  /** Sign a Bitcoin sighash (returns DER-encoded signature) */
+  signBitcoin: (sighash: string, sighashType: number) => Promise<BitcoinSignatureResponse>
+  /** Sign a Solana message (base64 in, base64 signature out) */
+  signSolana: (messageBase64: string) => Promise<SolanaSignatureResponse>
+  /** Sign a TRON transaction hash (returns r/s/v signature) */
+  signTron: (txHash: string) => Promise<TronSignatureResponse>
   /**
    * Sign an EIP-7702 authorization to delegate code to this account
    *
@@ -326,6 +338,81 @@ export function createKentuckySignerAccount(
     }
   }
 
+  /**
+   * Helper to handle 2FA for non-EVM signing.
+   * Parses 2FA requirements from error and prompts the user.
+   */
+  async function get2FACodes(err: KentuckySignerError): Promise<{ totpCode?: string; pin?: string }> {
+    if (!on2FARequired) throw err
+
+    const totpRequired = err.message.includes('TOTP') || (err.details?.includes('totp_code') ?? false)
+    const pinRequired = err.message.includes('PIN') || (err.details?.includes('pin') ?? false)
+    const pinLength = err.details?.match(/(\d)-digit/)?.[1] ? parseInt(err.details.match(/(\d)-digit/)![1]) : 6
+
+    const codes = await on2FARequired({ totpRequired, pinRequired, pinLength })
+    if (!codes) {
+      throw new KentuckySignerError('2FA verification cancelled', '2FA_CANCELLED', 'User cancelled 2FA input')
+    }
+    return { totpCode: codes.totpCode, pin: codes.pin }
+  }
+
+  /**
+   * Sign a Bitcoin sighash with auto-2FA handling
+   */
+  async function signBitcoinImpl(sighash: string, sighashType: number): Promise<BitcoinSignatureResponse> {
+    const token = await getToken()
+    try {
+      return await client.signBitcoinTransaction({ sighash, sighash_type: sighashType }, token)
+    } catch (err) {
+      if (err instanceof KentuckySignerError && err.code === '2FA_REQUIRED') {
+        const codes = await get2FACodes(err)
+        return await client.signBitcoinTransactionWith2FA(
+          { sighash, sighash_type: sighashType, totp_code: codes.totpCode, pin: codes.pin },
+          token
+        )
+      }
+      throw err
+    }
+  }
+
+  /**
+   * Sign a Solana message with auto-2FA handling
+   */
+  async function signSolanaImpl(messageBase64: string): Promise<SolanaSignatureResponse> {
+    const token = await getToken()
+    try {
+      return await client.signSolanaTransaction({ message: messageBase64 }, token)
+    } catch (err) {
+      if (err instanceof KentuckySignerError && err.code === '2FA_REQUIRED') {
+        const codes = await get2FACodes(err)
+        return await client.signSolanaTransactionWith2FA(
+          { message: messageBase64, totp_code: codes.totpCode, pin: codes.pin },
+          token
+        )
+      }
+      throw err
+    }
+  }
+
+  /**
+   * Sign a TRON tx hash with auto-2FA handling
+   */
+  async function signTronImpl(txHash: string): Promise<TronSignatureResponse> {
+    const token = await getToken()
+    try {
+      return await client.signTronTransaction({ tx_hash: txHash }, token)
+    } catch (err) {
+      if (err instanceof KentuckySignerError && err.code === '2FA_REQUIRED') {
+        const codes = await get2FACodes(err)
+        return await client.signTronTransactionWith2FA(
+          { tx_hash: txHash, totp_code: codes.totpCode, pin: codes.pin },
+          token
+        )
+      }
+      throw err
+    }
+  }
+
   const account = toAccount({
     address: session.evmAddress,
 
@@ -423,6 +510,11 @@ export function createKentuckySignerAccount(
     }
   }
 
+  // Multi-chain signing methods
+  account.signBitcoin = signBitcoinImpl
+  account.signSolana = signSolanaImpl
+  account.signTron = signTronImpl
+
   /**
    * Sign an EIP-7702 authorization
    *
@@ -487,12 +579,16 @@ export function createServerAccount(
   accountId: string,
   token: string,
   evmAddress: Address,
-  chainId: number = 1
+  chainId: number = 1,
+  options?: { btcAddress?: string; solAddress?: string; tronAddress?: string }
 ): KentuckySignerAccount {
   const session: AuthSession = {
     token,
     accountId,
     evmAddress,
+    btcAddress: options?.btcAddress,
+    solAddress: options?.solAddress,
+    tronAddress: options?.tronAddress,
     expiresAt: Date.now() + 3600000, // 1 hour default
   }
 

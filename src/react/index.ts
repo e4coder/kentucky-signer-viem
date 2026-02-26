@@ -28,6 +28,11 @@ export {
   useSignTypedData,
   useIsReady,
   useAddress,
+  // Multi-chain hooks
+  useMultiChainAddresses,
+  useSignBitcoin,
+  useSignSolana,
+  useSignTron,
   type UseWalletClientOptions,
 } from './hooks'
 
@@ -41,6 +46,15 @@ export {
   type UseTransactionStatusResult,
   type UseEstimateResult,
   type UseNonceResult,
+  // Solana Relay Hooks
+  useSolanaRelayInfo,
+  useSolanaEstimate,
+  useRelaySolana,
+  useSolanaTransactionStatus,
+  type UseSolanaRelayInfoResult,
+  type UseSolanaEstimateResult,
+  type UseRelaySolanaResult,
+  type UseSolanaTransactionStatusResult,
 } from './relayer-hooks'
 
 // Re-export relayer types needed by hooks
@@ -54,6 +68,12 @@ export {
   type TransactionStatus,
   type StatusResponse,
   type Authorization7702,
+  // Solana relay types
+  type SolanaRelayInfo,
+  type SolanaEstimateResponse,
+  type SolanaRelayResponse,
+  type SolanaTransactionStatus,
+  type SolanaStatusResponse,
 } from '../relayer-client'
 
 // Re-export intent types needed by hooks

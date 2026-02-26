@@ -2,6 +2,7 @@ import { useMemo, useCallback, useState } from 'react'
 import { createWalletClient, http, type Chain, type WalletClient, type Transport } from 'viem'
 import { useKentuckySignerContext } from './context'
 import type { KentuckySignerAccount } from '../account'
+import type { BitcoinSignatureResponse, SolanaSignatureResponse, TronSignatureResponse } from '../types'
 
 /**
  * Hook to access Kentucky Signer authentication state
@@ -295,4 +296,194 @@ export function useIsReady(): boolean {
 export function useAddress(): `0x${string}` | undefined {
   const { account } = useKentuckySignerContext()
   return account?.address
+}
+
+// ============================================================================
+// Multi-Chain Hooks
+// ============================================================================
+
+/**
+ * Hook to get all chain addresses from the session
+ *
+ * @returns Object with all chain addresses, or null if not authenticated
+ */
+export function useMultiChainAddresses(): {
+  evm?: string
+  bitcoin?: string
+  solana?: string
+  tron?: string
+} | null {
+  const { session } = useKentuckySignerContext()
+
+  return useMemo(() => {
+    if (!session) return null
+    return {
+      evm: session.evmAddress,
+      bitcoin: session.btcAddress,
+      solana: session.solAddress,
+      tron: session.tronAddress,
+    }
+  }, [session])
+}
+
+/**
+ * Hook for Bitcoin signing
+ *
+ * @returns Sign function, loading state, and error
+ *
+ * @example
+ * ```tsx
+ * function SignBitcoin() {
+ *   const { signBitcoin, isLoading } = useSignBitcoin()
+ *
+ *   async function sign() {
+ *     const result = await signBitcoin('abcdef...', 1) // SIGHASH_ALL
+ *     console.log('DER signature:', result.signature.der)
+ *   }
+ *
+ *   return <button onClick={sign} disabled={isLoading}>Sign Bitcoin</button>
+ * }
+ * ```
+ */
+export function useSignBitcoin() {
+  const { account } = useKentuckySignerContext()
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  const signBitcoin = useCallback(
+    async (sighash: string, sighashType: number): Promise<BitcoinSignatureResponse> => {
+      if (!account) {
+        throw new Error('Not authenticated')
+      }
+
+      setIsLoading(true)
+      setError(null)
+
+      try {
+        const result = await account.signBitcoin(sighash, sighashType)
+        return result
+      } catch (err) {
+        setError(err as Error)
+        throw err
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [account]
+  )
+
+  return {
+    signBitcoin,
+    isLoading,
+    error,
+    isAvailable: !!account,
+  }
+}
+
+/**
+ * Hook for Solana signing
+ *
+ * @returns Sign function, loading state, and error
+ *
+ * @example
+ * ```tsx
+ * function SignSolana() {
+ *   const { signSolana, isLoading } = useSignSolana()
+ *
+ *   async function sign() {
+ *     const result = await signSolana(base64Message)
+ *     console.log('Ed25519 signature:', result.signature)
+ *   }
+ *
+ *   return <button onClick={sign} disabled={isLoading}>Sign Solana</button>
+ * }
+ * ```
+ */
+export function useSignSolana() {
+  const { account } = useKentuckySignerContext()
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  const signSolana = useCallback(
+    async (messageBase64: string): Promise<SolanaSignatureResponse> => {
+      if (!account) {
+        throw new Error('Not authenticated')
+      }
+
+      setIsLoading(true)
+      setError(null)
+
+      try {
+        const result = await account.signSolana(messageBase64)
+        return result
+      } catch (err) {
+        setError(err as Error)
+        throw err
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [account]
+  )
+
+  return {
+    signSolana,
+    isLoading,
+    error,
+    isAvailable: !!account,
+  }
+}
+
+/**
+ * Hook for TRON signing
+ *
+ * @returns Sign function, loading state, and error
+ *
+ * @example
+ * ```tsx
+ * function SignTron() {
+ *   const { signTron, isLoading } = useSignTron()
+ *
+ *   async function sign() {
+ *     const result = await signTron('abcdef...')
+ *     console.log('Full signature:', result.signature.full)
+ *   }
+ *
+ *   return <button onClick={sign} disabled={isLoading}>Sign TRON</button>
+ * }
+ * ```
+ */
+export function useSignTron() {
+  const { account } = useKentuckySignerContext()
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  const signTron = useCallback(
+    async (txHash: string): Promise<TronSignatureResponse> => {
+      if (!account) {
+        throw new Error('Not authenticated')
+      }
+
+      setIsLoading(true)
+      setError(null)
+
+      try {
+        const result = await account.signTron(txHash)
+        return result
+      } catch (err) {
+        setError(err as Error)
+        throw err
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [account]
+  )
+
+  return {
+    signTron,
+    isLoading,
+    error,
+    isAvailable: !!account,
+  }
 }

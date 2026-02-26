@@ -119,6 +119,18 @@ export type {
   PinSetupRequest,
   PinSetupResponse,
   SignEvmRequestWith2FA,
+  // Bitcoin signing types
+  SignBitcoinRequest,
+  SignBitcoinRequestWith2FA,
+  BitcoinSignatureResponse,
+  // Solana signing types
+  SignSolanaRequest,
+  SignSolanaRequestWith2FA,
+  SolanaSignatureResponse,
+  // TRON signing types
+  SignTronRequest,
+  SignTronRequestWith2FA,
+  TronSignatureResponse,
 } from './types'
 
 // Utilities
@@ -161,4 +173,10 @@ export {
   type TransactionStatus,
   type StatusResponse,
   type RelayerClientOptions,
+  // Solana relay types
+  type SolanaRelayInfo,
+  type SolanaEstimateResponse,
+  type SolanaRelayResponse,
+  type SolanaTransactionStatus,
+  type SolanaStatusResponse,
 } from './relayer-client'
