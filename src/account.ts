@@ -140,8 +140,8 @@ export interface KentuckySignerAccount extends Omit<LocalAccount<'kentuckySigner
   updateSession: (session: AuthSession) => void
   /** Sign a Bitcoin sighash (returns DER-encoded signature) */
   signBitcoin: (sighash: string, sighashType: number) => Promise<BitcoinSignatureResponse>
-  /** Sign a Solana message (base64 in, base64 signature out) */
-  signSolana: (messageBase64: string) => Promise<SolanaSignatureResponse>
+  /** Sign a Solana message (base64url in, base64 signature out) */
+  signSolana: (messageBase64url: string) => Promise<SolanaSignatureResponse>
   /** Sign a TRON transaction hash (returns r/s/v signature) */
   signTron: (txHash: string) => Promise<TronSignatureResponse>
   /**

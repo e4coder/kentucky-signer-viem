@@ -621,7 +621,7 @@ export interface BitcoinSignatureResponse {
  * Sign Solana transaction request
  */
 export interface SignSolanaRequest {
-  /** Base64-encoded transaction message to sign */
+  /** Base64url-encoded transaction message to sign */
   message: string
 }
 

@@ -316,6 +316,55 @@ export class RelayerClient {
   }
 
   /**
+   * Relay a batch of signed intents for atomic execution via smartExecuteBatch
+   *
+   * @param chainId - Chain ID
+   * @param accountAddress - Account address
+   * @param signedIntents - Array of signed execution intents
+   * @param paymentMode - Payment mode
+   * @param authorization - Optional EIP-7702 authorization for gasless onboarding
+   * @returns Relay response with single txHash for the batch
+   */
+  async relayBatch(
+    chainId: number,
+    accountAddress: Address,
+    signedIntents: SignedIntent[],
+    paymentMode: PaymentMode,
+    authorization?: Authorization7702
+  ): Promise<RelayResponse> {
+    const body: any = {
+      chainId,
+      accountAddress,
+      intents: signedIntents.map(si => ({
+        nonce: si.intent.nonce.toString(),
+        deadline: si.intent.deadline.toString(),
+        target: si.intent.target,
+        value: si.intent.value.toString(),
+        data: si.intent.data,
+      })),
+      ownerSignatures: signedIntents.map(si => si.signature),
+      paymentMode,
+    }
+
+    if (authorization) {
+      body.authorization = {
+        chainId: authorization.chainId,
+        contractAddress: authorization.contractAddress,
+        nonce: authorization.nonce.toString(),
+        yParity: authorization.yParity,
+        r: authorization.r,
+        s: authorization.s,
+      }
+    }
+
+    const response = await this.fetch('/relay-batch', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    return response
+  }
+
+  /**
    * Get transaction status
    *
    * @param chainId - Chain ID
