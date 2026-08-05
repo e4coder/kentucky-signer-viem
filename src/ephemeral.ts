@@ -70,7 +70,7 @@ export async function generateEphemeralKeyPair(): Promise<EphemeralKeyPair> {
       name: 'ECDSA',
       namedCurve: 'P-256',
     },
-    true, // extractable (only for public key export)
+    false, // public key is always extractable for key pairs; this governs the private key
     ['sign', 'verify']
   )
 
