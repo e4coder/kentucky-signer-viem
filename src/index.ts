@@ -165,6 +165,7 @@ export {
 // Relayer client
 export {
   RelayerClient,
+  RelayerError,
   createRelayerClient,
   type PaymentMode,
   type TokenOption,

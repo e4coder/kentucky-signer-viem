@@ -156,8 +156,54 @@ export interface SolanaStatusResponse {
 export interface RelayerClientOptions {
   /** Relayer API base URL */
   baseUrl: string
-  /** Request timeout in ms (default: 30000) */
+  /** Request timeout in ms, bounds time to response headers (default: 120000) */
   timeout?: number
+  /** Custom fetch implementation (for Node.js or testing) */
+  fetch?: typeof fetch
+}
+
+/**
+ * Error thrown when a relayer API request fails
+ *
+ * Carries the full error context from the relayer: the HTTP status, the
+ * request path, the structured failure fields (`phase`, `intentIndex`) when
+ * the relayer reports them, the parsed response body when it is JSON, and
+ * the raw response text always.
+ */
+export class RelayerError extends Error {
+  readonly name = 'RelayerError'
+  /** HTTP status code of the response */
+  readonly status: number
+  /** Request path (e.g. '/relay-batch') */
+  readonly path: string
+  /** Pipeline phase reported by the relayer, if any */
+  readonly phase?: string
+  /** Index of the failing intent in a batch, if reported */
+  readonly intentIndex?: number
+  /** Parsed JSON response body, when parseable */
+  readonly body?: unknown
+  /** Raw response text, always */
+  readonly raw: string
+
+  constructor(
+    message: string,
+    details: {
+      status: number
+      path: string
+      phase?: string
+      intentIndex?: number
+      body?: unknown
+      raw: string
+    }
+  ) {
+    super(message)
+    this.status = details.status
+    this.path = details.path
+    this.phase = details.phase
+    this.intentIndex = details.intentIndex
+    this.body = details.body
+    this.raw = details.raw
+  }
 }
 
 /**
@@ -188,10 +234,13 @@ export interface RelayerClientOptions {
 export class RelayerClient {
   private baseUrl: string
   private timeout: number
+  private fetchImpl: typeof fetch
 
   constructor(options: RelayerClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '') // Remove trailing slash
-    this.timeout = options.timeout ?? 30000
+    this.timeout = options.timeout ?? 120000
+    // Bind fetch to globalThis to avoid "Illegal invocation" in browsers
+    this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis)
   }
 
   /**
@@ -456,8 +505,9 @@ export class RelayerClient {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), this.timeout)
 
+    let response: Response
     try {
-      const response = await fetch(`${this.baseUrl}${path}`, {
+      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         ...options,
         headers: {
           'Content-Type': 'application/json',
@@ -465,17 +515,49 @@ export class RelayerClient {
         },
         signal: controller.signal,
       })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || `Request failed: ${response.status}`)
-      }
-
-      return data
     } finally {
+      // Disarm the abort timer as soon as headers arrive (or the request
+      // fails) so it cannot tear down the body stream mid-read
       clearTimeout(timeoutId)
     }
+
+    const raw = await response.text()
+    let data: unknown
+    try {
+      data = JSON.parse(raw)
+    } catch {
+      data = undefined
+    }
+
+    if (!response.ok) {
+      const body = data as
+        | { error?: unknown; phase?: unknown; intentIndex?: unknown }
+        | undefined
+      throw new RelayerError(
+        typeof body?.error === 'string' && body.error
+          ? body.error
+          : `Request failed: ${response.status}`,
+        {
+          status: response.status,
+          path,
+          phase: typeof body?.phase === 'string' ? body.phase : undefined,
+          intentIndex:
+            typeof body?.intentIndex === 'number' ? body.intentIndex : undefined,
+          body: data,
+          raw,
+        }
+      )
+    }
+
+    if (data === undefined) {
+      throw new RelayerError(`Invalid JSON response: ${response.status}`, {
+        status: response.status,
+        path,
+        raw,
+      })
+    }
+
+    return data
   }
 }
 
@@ -483,8 +565,12 @@ export class RelayerClient {
  * Create a relayer client
  *
  * @param baseUrl - Relayer API base URL
+ * @param options - Optional client options (timeout, custom fetch)
  * @returns Relayer client instance
  */
-export function createRelayerClient(baseUrl: string): RelayerClient {
-  return new RelayerClient({ baseUrl })
+export function createRelayerClient(
+  baseUrl: string,
+  options?: Omit<RelayerClientOptions, 'baseUrl'>
+): RelayerClient {
+  return new RelayerClient({ baseUrl, ...options })
 }
