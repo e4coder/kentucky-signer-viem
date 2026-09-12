@@ -22,11 +22,18 @@ import { toAccount } from 'viem/accounts'
 import type {
   AuthSession,
   KentuckySignerConfig,
+  AccountInfoExtendedResponse,
+  AccountPublicKeys,
+  BitcoinAddressType,
+  BitcoinNetwork,
+  BitcoinSighashType,
   BitcoinSignatureResponse,
   SolanaSignatureResponse,
   TronSignatureResponse,
 } from './types'
+import { SOLANA_MAX_MESSAGE_BYTES } from './types'
 import { KentuckySignerClient, KentuckySignerError } from './client'
+import { base64UrlDecode } from './utils'
 import { SecureKentuckySignerClient } from './secure-client'
 import type { EphemeralKeyManager } from './ephemeral'
 
@@ -138,11 +145,29 @@ export interface KentuckySignerAccount extends Omit<LocalAccount<'kentuckySigner
   session: AuthSession
   /** Update the session (e.g., after refresh) */
   updateSession: (session: AuthSession) => void
-  /** Sign a Bitcoin sighash (returns DER-encoded signature) */
-  signBitcoin: (sighash: string, sighashType: number) => Promise<BitcoinSignatureResponse>
-  /** Sign a Solana message (base64url in, base64 signature out) */
+  /**
+   * Fetch addresses, public keys and auth configuration for this account.
+   *
+   * Use `public_keys.bitcoin` (compressed secp256k1) when building PSBTs
+   * with bitcoinjs-lib, and `addresses.bitcoin_address_type` /
+   * `addresses.bitcoin_network` instead of guessing from the address.
+   */
+  getAccountInfo: () => Promise<AccountInfoExtendedResponse>
+  /**
+   * Sign a Bitcoin sighash. Returns DER with the sighash byte already appended.
+   * One call per transaction input.
+   */
+  signBitcoin: (
+    sighash: string,
+    sighashType: BitcoinSighashType | number
+  ) => Promise<BitcoinSignatureResponse>
+  /**
+   * Sign raw bytes with the account's Ed25519 key (base64 or base64url in,
+   * base64 signature out). Works for transaction messages, signMessage and
+   * Sign-In-With-Solana. Max SOLANA_MAX_MESSAGE_BYTES raw bytes.
+   */
   signSolana: (messageBase64url: string) => Promise<SolanaSignatureResponse>
-  /** Sign a TRON transaction hash (returns r/s/v signature) */
+  /** Sign a TRON transaction or message hash (returns r/s/v with v = 27 or 28) */
   signTron: (txHash: string) => Promise<TronSignatureResponse>
   /**
    * Sign an EIP-7702 authorization to delegate code to this account
@@ -357,9 +382,20 @@ export function createKentuckySignerAccount(
   }
 
   /**
+   * Fetch account info (addresses, public keys, auth config)
+   */
+  async function getAccountInfoImpl(): Promise<AccountInfoExtendedResponse> {
+    const token = await getToken()
+    return client.getAccountInfoExtended(config.accountId, token)
+  }
+
+  /**
    * Sign a Bitcoin sighash with auto-2FA handling
    */
-  async function signBitcoinImpl(sighash: string, sighashType: number): Promise<BitcoinSignatureResponse> {
+  async function signBitcoinImpl(
+    sighash: string,
+    sighashType: BitcoinSighashType | number
+  ): Promise<BitcoinSignatureResponse> {
     const token = await getToken()
     try {
       return await client.signBitcoinTransaction({ sighash, sighash_type: sighashType }, token)
@@ -379,6 +415,16 @@ export function createKentuckySignerAccount(
    * Sign a Solana message with auto-2FA handling
    */
   async function signSolanaImpl(messageBase64: string): Promise<SolanaSignatureResponse> {
+    // Reject oversize messages locally; the signer enforces the same cap.
+    const messageBytes = base64UrlDecode(messageBase64).length
+    if (messageBytes > SOLANA_MAX_MESSAGE_BYTES) {
+      throw new KentuckySignerError(
+        `Solana message too large: ${messageBytes} bytes (max ${SOLANA_MAX_MESSAGE_BYTES})`,
+        'MESSAGE_TOO_LARGE',
+        `Message is ${messageBytes} bytes; the signer accepts at most ${SOLANA_MAX_MESSAGE_BYTES} bytes`
+      )
+    }
+
     const token = await getToken()
     try {
       return await client.signSolanaTransaction({ message: messageBase64 }, token)
@@ -510,7 +556,8 @@ export function createKentuckySignerAccount(
     }
   }
 
-  // Multi-chain signing methods
+  // Account info and multi-chain signing methods
+  account.getAccountInfo = getAccountInfoImpl
   account.signBitcoin = signBitcoinImpl
   account.signSolana = signSolanaImpl
   account.signTron = signTronImpl
@@ -580,7 +627,14 @@ export function createServerAccount(
   token: string,
   evmAddress: Address,
   chainId: number = 1,
-  options?: { btcAddress?: string; solAddress?: string; tronAddress?: string }
+  options?: {
+    btcAddress?: string
+    solAddress?: string
+    tronAddress?: string
+    publicKeys?: AccountPublicKeys
+    btcAddressType?: BitcoinAddressType
+    btcNetwork?: BitcoinNetwork
+  }
 ): KentuckySignerAccount {
   const session: AuthSession = {
     token,
@@ -589,6 +643,9 @@ export function createServerAccount(
     btcAddress: options?.btcAddress,
     solAddress: options?.solAddress,
     tronAddress: options?.tronAddress,
+    publicKeys: options?.publicKeys,
+    btcAddressType: options?.btcAddressType,
+    btcNetwork: options?.btcNetwork,
     expiresAt: Date.now() + 3600000, // 1 hour default
   }
 

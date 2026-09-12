@@ -185,6 +185,9 @@ export async function authenticateWithPasskey(
     btcAddress: accountInfo.addresses.bitcoin,
     solAddress: accountInfo.addresses.solana,
     tronAddress: accountInfo.addresses.tron,
+    publicKeys: accountInfo.public_keys,
+    btcAddressType: accountInfo.addresses.bitcoin_address_type,
+    btcNetwork: accountInfo.addresses.bitcoin_network,
     expiresAt,
   }
 }
@@ -218,6 +221,9 @@ export async function authenticateWithToken(
     btcAddress: accountInfo.addresses.bitcoin,
     solAddress: accountInfo.addresses.solana,
     tronAddress: accountInfo.addresses.tron,
+    publicKeys: accountInfo.public_keys,
+    btcAddressType: accountInfo.addresses.bitcoin_address_type,
+    btcNetwork: accountInfo.addresses.bitcoin_network,
     expiresAt: expiresAt ?? Date.now() + 3600000, // Default 1 hour if not specified
   }
 }
@@ -401,6 +407,9 @@ export async function authenticateWithPassword(
     btcAddress: accountInfo.addresses.bitcoin,
     solAddress: accountInfo.addresses.solana,
     tronAddress: accountInfo.addresses.tron,
+    publicKeys: accountInfo.public_keys,
+    btcAddressType: accountInfo.addresses.bitcoin_address_type,
+    btcNetwork: accountInfo.addresses.bitcoin_network,
     expiresAt,
   }
 }

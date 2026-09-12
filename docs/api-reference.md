@@ -173,17 +173,31 @@ async getAccountInfo(accountId: string, token: string): Promise<AccountInfoRespo
 interface AccountInfoResponse {
   success: boolean
   account_id: string
-  addresses: {
-    evm: string
-    bitcoin: string
-    solana: string
-  }
-  passkeys: Array<{
-    credential_id: string
-    created_at: number
-  }>
+  addresses: AccountAddresses
+  public_keys?: AccountPublicKeys
+}
+
+interface AccountAddresses {
+  evm: string
+  bitcoin: string                    // native segwit P2WPKH, `bc1q...`
+  bitcoin_address_type?: 'p2wpkh'
+  bitcoin_network?: 'mainnet'
+  solana: string
+  tron: string
+}
+
+interface AccountPublicKeys {         // hex, no 0x prefix
+  evm: string                        // compressed secp256k1, 33 bytes
+  bitcoin: string                    // same key as evm
+  tron: string                       // same key as evm
+  solana: string                     // Ed25519, 32 bytes
 }
 ```
+
+**Notes:**
+- EVM, Bitcoin and TRON share one secp256k1 key. Solana has its own Ed25519 key.
+- `public_keys`, `bitcoin_address_type` and `bitcoin_network` are only returned by signers at or after the public-keys release. Older signers omit them.
+- Use `public_keys.bitcoin` for bitcoinjs-lib PSBT inputs.
 
 #### getAccountInfoExtended
 
@@ -198,11 +212,8 @@ async getAccountInfoExtended(accountId: string, token: string): Promise<AccountI
 interface AccountInfoExtendedResponse {
   success: boolean
   account_id: string
-  addresses: {
-    evm: string
-    bitcoin: string
-    solana: string
-  }
+  addresses: AccountAddresses        // see getAccountInfo
+  public_keys?: AccountPublicKeys    // see getAccountInfo
   auth_config: {
     passkey: boolean
     password: boolean
@@ -331,6 +342,110 @@ Convenience method for signing a hash.
 
 ```typescript
 async signHash(hash: Hex, token: string): Promise<Hex>
+```
+
+#### signBitcoinTransaction
+
+Sign one Bitcoin sighash. Each method has a `With2FA` variant that takes `totp_code` / `pin`.
+
+```typescript
+async signBitcoinTransaction(
+  request: SignBitcoinRequest,
+  token: string
+): Promise<BitcoinSignatureResponse>
+```
+
+**Parameters:**
+```typescript
+interface SignBitcoinRequest {
+  sighash: string                          // 32-byte hash, hex, optional 0x prefix
+  sighash_type: BitcoinSighashType | number
+}
+
+const BitcoinSighashType = {
+  ALL: 0x01, NONE: 0x02, SINGLE: 0x03,
+  ALL_ANYONECANPAY: 0x81, NONE_ANYONECANPAY: 0x82, SINGLE_ANYONECANPAY: 0x83,
+}
+```
+
+**Returns:**
+```typescript
+interface BitcoinSignatureResponse {
+  success: boolean
+  signature: {
+    der: string     // DER, low-S, sighash byte ALREADY appended
+    length: number
+  }
+  sighash_type: number
+}
+```
+
+**Notes:**
+- `der` is ready to place in the witness. Do not append the sighash byte again.
+- One sighash per call. A multi-input PSBT needs one call per input.
+- Message signing (BIP-322 or legacy) is not available yet.
+
+#### signSolanaTransaction
+
+Sign raw bytes with the account's Ed25519 key. `With2FA` variant available.
+
+```typescript
+async signSolanaTransaction(
+  request: SignSolanaRequest,
+  token: string
+): Promise<SolanaSignatureResponse>
+```
+
+**Parameters:**
+```typescript
+interface SignSolanaRequest {
+  message: string   // base64 or base64url, padding optional, max SOLANA_MAX_MESSAGE_BYTES (1536) raw bytes
+}
+```
+
+**Returns:**
+```typescript
+interface SolanaSignatureResponse {
+  success: boolean
+  signature: string // base64, 64-byte Ed25519 signature
+}
+```
+
+**Notes:**
+- The signer does not parse the bytes, so transaction messages, `signMessage` payloads and Sign-In-With-Solana all use this call.
+- The limit covers Solana's 1232-byte packet size.
+- `account.signSolana` checks the size locally and throws `KentuckySignerError` with code `MESSAGE_TOO_LARGE` before contacting the signer.
+
+#### signTronTransaction
+
+Sign a TRON transaction or message hash. `With2FA` variant available.
+
+```typescript
+async signTronTransaction(
+  request: SignTronRequest,
+  token: string
+): Promise<TronSignatureResponse>
+```
+
+**Parameters:**
+```typescript
+interface SignTronRequest {
+  tx_hash: string   // 32-byte hash, hex, optional 0x prefix
+}
+```
+
+**Returns:**
+```typescript
+interface TronSignatureResponse {
+  success: boolean
+  signature: {
+    r: string
+    s: string
+    v: number       // 27 or 28
+    full: string    // 65-byte r||s||v hex, as TronWeb expects
+  }
+  signer_address: string // base58check `T...`
+}
 ```
 
 ### Guardian Methods
@@ -639,7 +754,22 @@ interface KentuckySignerAccount extends LocalAccount<'kentuckySigner'> {
   accountId: string
   session: AuthSession
   updateSession: (session: AuthSession) => void
+  getAccountInfo: () => Promise<AccountInfoExtendedResponse>   // addresses, public keys, auth config
+  signBitcoin: (sighash: string, sighashType: BitcoinSighashType | number) => Promise<BitcoinSignatureResponse>
+  signSolana: (messageBase64: string) => Promise<SolanaSignatureResponse>
+  signTron: (txHash: string) => Promise<TronSignatureResponse>
+  sign7702Authorization: (params, nonce) => Promise<SignedAuthorization>
 }
+```
+
+The multi-chain methods handle 2FA automatically through `on2FARequired`, the same way EVM signing does.
+
+```typescript
+const info = await account.getAccountInfo()
+const btcPubkey = Buffer.from(info.public_keys!.bitcoin, 'hex') // for bitcoinjs-lib PSBT
+
+const sig = await account.signBitcoin(sighashHex, BitcoinSighashType.ALL_ANYONECANPAY)
+// sig.signature.der already ends with 0x81
 ```
 
 ### createServerAccount
@@ -723,6 +853,10 @@ interface AuthSession {
   evmAddress: `0x${string}`
   btcAddress?: string
   solAddress?: string
+  tronAddress?: string
+  publicKeys?: AccountPublicKeys     // hex, no 0x; see getAccountInfo
+  btcAddressType?: 'p2wpkh'
+  btcNetwork?: 'mainnet'
   expiresAt: number // Unix ms
 }
 
@@ -793,6 +927,7 @@ try {
 | `SESSION_EXPIRED` | Session has expired |
 | `2FA_REQUIRED` | 2FA codes required for operation |
 | `2FA_CANCELLED` | User cancelled 2FA input |
+| `MESSAGE_TOO_LARGE` | Solana message exceeds `SOLANA_MAX_MESSAGE_BYTES`; raised locally before any request |
 | `INVALID_2FA` | Invalid TOTP or PIN code |
 | `RECOVERY_ACTIVE` | Cannot perform action during recovery |
 | `TIMELOCK_NOT_EXPIRED` | Recovery timelock hasn't expired |

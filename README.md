@@ -555,10 +555,13 @@ await client.completeRecovery(accountId)
 #### Signing
 - `signEvmTransaction(request, token)` - Sign EVM transaction hash
 - `signEvmTransactionWith2FA(request, token)` - Sign with 2FA codes
+- `signBitcoinTransaction(request, token)` - Sign a Bitcoin sighash (ALL/NONE/SINGLE, optionally ANYONECANPAY); DER returned with sighash byte appended
+- `signSolanaTransaction(request, token)` - Sign raw bytes with Ed25519 (transactions, signMessage, SIWS); up to 1536 bytes
+- `signTronTransaction(request, token)` - Sign a TRON hash (v = 27/28)
 
 #### Account Management
 - `getAccountInfo(accountId, token)` - Get account info
-- `getAccountInfoExtended(accountId, token)` - Get account info with auth config
+- `getAccountInfoExtended(accountId, token)` - Get account info with auth config, addresses and public keys
 - `addPassword(accountId, request, token)` - Add password auth
 - `addPasskey(accountId, request, token)` - Add passkey
 - `removePasskey(accountId, passkeyIndex, token)` - Remove passkey by index
@@ -572,6 +575,14 @@ await client.completeRecovery(accountId)
 - `disablePIN(pin, token)` - Disable PIN
 
 ### Account Methods
+
+#### Account Info
+- `account.getAccountInfo()` - Addresses, public keys (compressed secp256k1 for EVM/Bitcoin/TRON, Ed25519 for Solana) and auth config
+
+#### Multi-Chain Signing
+- `account.signBitcoin(sighash, sighashType)` - One sighash per input; use `BitcoinSighashType` constants
+- `account.signSolana(messageBase64)` - Raw bytes, Ed25519
+- `account.signTron(txHash)` - r/s/v signature
 
 #### EIP-7702 Authorization
 - `account.sign7702Authorization(params, nonce)` - Sign authorization to delegate EOA code

@@ -26,6 +26,16 @@ export interface AuthSession {
   solAddress?: string
   /** TRON address derived from the account */
   tronAddress?: string
+  /**
+   * Per-chain public keys (hex, no 0x). Populated by signers at or after the
+   * public-keys release; undefined for older signers and for sessions
+   * persisted before this field existed.
+   */
+  publicKeys?: AccountPublicKeys
+  /** Bitcoin address scheme, when reported by the signer */
+  btcAddressType?: BitcoinAddressType
+  /** Bitcoin network, when reported by the signer */
+  btcNetwork?: BitcoinNetwork
   /** Token expiration timestamp (Unix ms) */
   expiresAt: number
 }
@@ -50,18 +60,58 @@ export interface AuthResponse {
 }
 
 /**
+ * Bitcoin address scheme used by the signer.
+ * Currently always native segwit P2WPKH (witness v0, bech32, `bc1q...`).
+ */
+export type BitcoinAddressType = 'p2wpkh'
+
+/**
+ * Bitcoin network the signer derives addresses for. Currently always mainnet.
+ */
+export type BitcoinNetwork = 'mainnet'
+
+/**
+ * Per-chain addresses for one account
+ */
+export interface AccountAddresses {
+  evm: string
+  /** Native segwit P2WPKH address (`bc1q...`) */
+  bitcoin: string
+  /** Bitcoin address scheme. Omitted by signers older than the public-keys release. */
+  bitcoin_address_type?: BitcoinAddressType
+  /** Bitcoin network. Omitted by signers older than the public-keys release. */
+  bitcoin_network?: BitcoinNetwork
+  /** Base58 Ed25519 public key */
+  solana: string
+  /** Base58check `T...` address */
+  tron: string
+}
+
+/**
+ * Per-chain public keys for one account, hex encoded without 0x prefix.
+ *
+ * EVM, Bitcoin and TRON share a single secp256k1 key, returned compressed
+ * (33 bytes, 66 hex chars). Solana uses a separate Ed25519 key (32 bytes,
+ * 64 hex chars). Use `bitcoin` for bitcoinjs-lib PSBT inputs.
+ */
+export interface AccountPublicKeys {
+  evm: string
+  bitcoin: string
+  tron: string
+  solana: string
+}
+
+/**
  * Account info response from Kentucky Signer
  */
 export interface AccountInfoResponse {
   success: boolean
   account_id: string
-  addresses: {
-    evm: string
-    bitcoin: string
-    solana: string
-    tron: string
-  }
-  passkeys: Array<{
+  addresses: AccountAddresses
+  /** Omitted by signers older than the public-keys release. */
+  public_keys?: AccountPublicKeys
+  /** @deprecated The signer returns `auth_config` and `passkey_count` instead; see AccountInfoExtendedResponse. */
+  passkeys?: Array<{
     credential_id: string
     created_at: number
   }>
@@ -82,6 +132,7 @@ export interface EvmSignatureResponse {
     v: number
     full: Hex
   }
+  /** 0x address of the signing account */
   signer_address: string
 }
 
@@ -316,12 +367,9 @@ export interface AuthConfig {
 export interface AccountInfoExtendedResponse {
   success: boolean
   account_id: string
-  addresses: {
-    evm: string
-    bitcoin: string
-    solana: string
-    tron: string
-  }
+  addresses: AccountAddresses
+  /** Omitted by signers older than the public-keys release. */
+  public_keys?: AccountPublicKeys
   auth_config: AuthConfig
   passkey_count: number
   guardian_count?: number
@@ -579,13 +627,31 @@ export interface SignEvmRequestWith2FA extends SignEvmRequest {
 // ============================================================================
 
 /**
+ * Bitcoin sighash types accepted by the signer.
+ *
+ * The three base types may each be OR'd with 0x80 (ANYONECANPAY).
+ */
+export const BitcoinSighashType = {
+  ALL: 0x01,
+  NONE: 0x02,
+  SINGLE: 0x03,
+  ALL_ANYONECANPAY: 0x81,
+  NONE_ANYONECANPAY: 0x82,
+  SINGLE_ANYONECANPAY: 0x83,
+} as const
+
+export type BitcoinSighashType = (typeof BitcoinSighashType)[keyof typeof BitcoinSighashType]
+
+/**
  * Sign Bitcoin transaction request
+ *
+ * One sighash per call. A multi-input transaction needs one call per input.
  */
 export interface SignBitcoinRequest {
-  /** Transaction sighash to sign (32 bytes, hex encoded) */
+  /** Transaction sighash to sign (32 bytes, hex encoded, optional 0x prefix) */
   sighash: string
-  /** Sighash type: 1=ALL, 2=NONE, 3=SINGLE */
-  sighash_type: number
+  /** Sighash type: 1=ALL, 2=NONE, 3=SINGLE, or 0x81/0x82/0x83 for ANYONECANPAY */
+  sighash_type: BitcoinSighashType | number
 }
 
 /**
@@ -604,9 +670,13 @@ export interface SignBitcoinRequestWith2FA extends SignBitcoinRequest {
 export interface BitcoinSignatureResponse {
   success: boolean
   signature: {
-    /** DER-encoded signature (hex) */
+    /**
+     * DER-encoded ECDSA signature (hex, no 0x prefix), low-S normalized,
+     * with the sighash type byte already appended. Place it directly in
+     * the witness or scriptSig; do not append the sighash byte again.
+     */
     der: string
-    /** Signature byte length */
+    /** Signature byte length, including the sighash byte */
     length: number
   }
   /** Echoed sighash type */
@@ -618,10 +688,23 @@ export interface BitcoinSignatureResponse {
 // ============================================================================
 
 /**
+ * Largest message the signer accepts for Solana, in raw bytes.
+ * Solana's packet limit is 1232 bytes, so any transaction message fits.
+ */
+export const SOLANA_MAX_MESSAGE_BYTES = 1536
+
+/**
  * Sign Solana transaction request
+ *
+ * The signer signs the decoded bytes as-is with Ed25519 and does not parse
+ * them, so transaction messages, `signMessage` payloads and Sign-In-With-Solana
+ * inputs all go through this request.
  */
 export interface SignSolanaRequest {
-  /** Base64url-encoded transaction message to sign */
+  /**
+   * Bytes to sign, base64 or base64url encoded (padding optional).
+   * At most SOLANA_MAX_MESSAGE_BYTES raw bytes.
+   */
   message: string
 }
 
@@ -681,5 +764,6 @@ export interface TronSignatureResponse {
     /** Full 65-byte signature (hex) */
     full: string
   }
+  /** Base58check `T...` address of the signing account */
   signer_address: string
 }

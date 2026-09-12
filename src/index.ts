@@ -74,6 +74,10 @@ export type {
   AuthResponse,
   AccountInfoResponse,
   AccountInfoExtendedResponse,
+  AccountAddresses,
+  AccountPublicKeys,
+  BitcoinAddressType,
+  BitcoinNetwork,
   AuthConfig,
   EvmSignatureResponse,
   ApiErrorResponse,
@@ -132,6 +136,9 @@ export type {
   SignTronRequestWith2FA,
   TronSignatureResponse,
 } from './types'
+
+// Multi-chain constants (BitcoinSighashType is both a value and a type)
+export { BitcoinSighashType, SOLANA_MAX_MESSAGE_BYTES } from './types'
 
 // Utilities
 export {

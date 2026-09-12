@@ -197,6 +197,10 @@ interface AuthSession {
   evmAddress: Address  // EVM address (0x prefixed, checksummed)
   btcAddress?: string  // Bitcoin address (if available)
   solAddress?: string  // Solana address (if available)
+  tronAddress?: string // TRON address (if available)
+  publicKeys?: AccountPublicKeys   // Per-chain public keys, hex without 0x (newer signers only)
+  btcAddressType?: 'p2wpkh'        // Bitcoin address scheme (newer signers only)
+  btcNetwork?: 'mainnet'           // Bitcoin network (newer signers only)
   expiresAt: number    // Token expiration timestamp (milliseconds)
 }
 ```
